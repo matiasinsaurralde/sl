@@ -2,6 +2,11 @@
 
 Intérprete experimental de SL, basado en Go.
 
+## Ideas
+
+* Agregar tests y lograr que corra la mayoría de los ejemplos del libro.
+* Exponer algunas cosas de Go o incrustar C (mediante cgo).
+
 ## Uso
 
 Programa de prueba:
