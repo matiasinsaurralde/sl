@@ -4,19 +4,24 @@ import(
   "github.com/matiasinsaurralde/sl/ast"
   "github.com/matiasinsaurralde/sl/token"
 
-  goparser "go/parser"
+  "github.com/davecgh/go-spew/spew"
+  // goparser "go/parser"
+  // goast "go/ast"
 
-  "os"
+  // "os"
   "bufio"
+  "io"
 
   "strings"
 
   "fmt"
 )
 
-func parseBlockStatement( blockStatement *Ast.BlockStatement, body string ) {
-  reader := strings.NewReader(body)
+func parseBlockStatement( body *string ) *Ast.BlockStatement {
+  reader := strings.NewReader(*body)
   scanner := bufio.NewScanner( reader )
+
+  bs := Ast.BlockStatement{}
 
   var expect token.Token
   expect = -1
@@ -60,7 +65,9 @@ func parseBlockStatement( blockStatement *Ast.BlockStatement, body string ) {
             var statement Ast.Statement
             statement = CallExpression
 
-            blockStatement.List = append(blockStatement.List, statement)
+            bs.List = append( bs.List, statement)
+
+            // blockStatement.List = append(blockStatement.List, statement)
 
             expect = -1
           }
@@ -70,6 +77,8 @@ func parseBlockStatement( blockStatement *Ast.BlockStatement, body string ) {
       }
     }
   }
+
+  return &bs
 }
 
 func parseExpression( expr string ) Ast.Expression {
@@ -157,6 +166,7 @@ func parseDeclarations( body string ) []Ast.Node {
   return declarations
 }
 
+/*
 func ParseFile( filename string ) ( f *Ast.File, err error ) {
 
   var file *os.File
@@ -333,10 +343,237 @@ func ParseFile( filename string ) ( f *Ast.File, err error ) {
 
   return f, err
 }
+*/
+
+func Parse( input string ) (f *Ast.File, err error) {
+
+  f = &Ast.File{}
+
+  reader := strings.NewReader(input)
+
+  buf := make([]byte, 0)
+
+  currentPosition := 0
+
+  spew.Dump(1)
+
+  var tok, expect token.Token
+
+  var block string = ""
+
+  expect = -1
+
+  var node Ast.Node
+  var genericDeclaration Ast.GenericDeclaration
+  var subroutineDeclaration Ast.SubroutineDeclaration
+  var subroutine bool = false
+
+  for {
+
+    var ignore bool = false
+
+    b, err := reader.ReadByte()
+
+    ch := string(b)
+    stringBuf := string(buf)
+
+    tok = token.Lookup(stringBuf)
+
+    // spew.Dump(stringBuf)
+    // spew.Dump(stringBuf, expect)
+    // fmt.Println("")
+
+    // spew.Dump(stringBuf, tok)
+
+    switch tok {
+    case token.VAR:
+      fmt.Println("*** Definicion", stringBuf, expect, ch)
+      expect = token.VAR_NAME
+      buf = make([]byte, 0)
+    case token.START:
+      fmt.Println("bexpect", expect)
+      expect = token.END
+      buf = make([]byte, 0)
+      ignore = true
+      block = ""
+
+      if subroutine {
+        fmt.Println(" - Block starts (subroutine)...")
+      } else {
+        fmt.Println(" - Block starts (main)...")
+      }
+
+    case token.SUBR:
+      expect = token.SUBR_NAME
+      buf = make([]byte, 0)
+    case token.SUBR_RETURN:
+      expect = token.SUBR_RETURN_TYPE
+      buf = make([]byte, 0)
+    }
+
+
+    switch expect {
+    case token.VAR_NAME:
+      if ch == "\n" {
+        ignore = true
+      }
+      if ch == ":" {
+        genericDeclaration = Ast.GenericDeclaration{
+          Name: stringBuf,
+          StartPos: token.Pos( currentPosition - len( stringBuf ) ),
+        }
+        fmt.Println("VAR_NAME =",stringBuf)
+        buf = make([]byte, 0)
+        expect = token.VAR_TYPE
+        ignore = true
+      }
+      if ch == "=" {
+        genericDeclaration = Ast.GenericDeclaration{
+          Name: stringBuf,
+          StartPos: token.Pos( currentPosition - len( stringBuf ) ),
+        }
+        fmt.Println("VAR_NAME =",stringBuf)
+        buf = make([]byte, 0)
+        expect = token.VAR_VALUE
+        ignore = true
+      }
+    case token.VAR_TYPE:
+      if ch == "\n" || err == io.EOF {
+        genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
+        node = &genericDeclaration
+        fmt.Println( "*** genericDeclaration:", genericDeclaration)
+        fmt.Println("VAR_TYPE =", stringBuf)
+        buf = make([]byte, 0)
+        expect = token.VAR_NAME
+        ignore = true
+      }
+    case token.VAR_VALUE:
+      if ch == "\n" || err == io.EOF {
+        genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
+        node = &genericDeclaration
+        if node != nil {}
+        fmt.Println( "*** genericDeclaration:", genericDeclaration)
+        fmt.Println("VAR_VALUE =", stringBuf)
+        buf = make([]byte, 0)
+        expect = token.VAR_NAME
+        ignore = true
+      }
+    case token.START:
+      // fmt.Println("Expecting START", stringBuf )
+      if ch == "\n" {
+        ignore = true
+      }
+
+      if len(stringBuf) == 1 {
+        startLinebreak := stringBuf[0:1]
+        if startLinebreak == "\n" {
+          buf = buf[ 1 : len(buf) ]
+        }
+      }
+    case token.END:
+      length := len(stringBuf)
+      if( length >= 4 ) {
+
+        lastChars := stringBuf[length-4 : length]
+
+        if lastChars == "fin\n" {
+          block = stringBuf[0 : length - 4]
+          fmt.Println(" - Block ends with contents:")
+
+          if subroutine {
+            subroutineDeclaration.EndPos = token.Pos( currentPosition - len(stringBuf))
+            subroutineDeclaration.Body = parseBlockStatement(&stringBuf)
+            fmt.Println( "*** subroutineDeclaration", subroutineDeclaration )
+          }
+
+          // subroutineDeclaration.Body = block
+
+          spew.Dump(block)
+          fmt.Println("")
+          buf = make([]byte, 0)
+          subroutine = false
+          expect = -1
+        }
+      }
+      // lastChars := stringBuf[ len(stringBuf) - 3 : len(stringBuf) ]
+      // fmt.Println( "***", lastChars)
+    case token.SUBR_NAME:
+      charTok := token.Lookup(ch)
+      switch charTok {
+      case token.LPAREN:
+        fmt.Println(" - Subroutine is declared:", stringBuf )
+
+        subroutineDeclaration = Ast.SubroutineDeclaration{
+          Name: stringBuf,
+          StartPos: token.Pos(currentPosition - len(stringBuf) ),
+        }
+
+        subroutine = true
+        ignore = true
+        buf = make([]byte, 0)
+      case token.RPAREN:
+        fmt.Println(" - Subroutine declaration with contents:")
+        spew.Dump(block)
+        fmt.Println("\n")
+        ignore = true
+        buf = make([]byte, 0)
+        expect = token.START
+      }
+      // spew.Dump(ch)
+    case token.SUBR_RETURN_TYPE:
+      if ch == "\n" {
+        buf = make([]byte, 0)
+        fmt.Println( " - Subroutine returns: *", stringBuf, "*" )
+        expect = token.START
+      }
+    case -1:
+      if ch == "\n" {
+        ignore = true
+      }
+      if len(stringBuf) == 1 {
+        startLinebreak := stringBuf[0:1]
+        if startLinebreak == "\n" {
+          buf = buf[ 1 : len(buf) ]
+        }
+      }
+    }
+
+    if ch == " " {
+      ignore = true
+    }
+
+    /*
+    if len(stringBuf) > 2 {
+      if stringBuf[0:1] == "\n" {
+        buf = buf[1:len(buf)]
+        ignore = true
+      }
+    }
+    */
+
+    if !ignore {
+      buf = append( buf, b )
+    }
+
+    if err != nil {
+      if err == io.EOF {
+        fmt.Println("*eof")
+      }
+      break
+    }
+
+    currentPosition++
+
+  }
+
+  // fmt.Println("buf", string(buf))
+
+  return f, err
+}
 
 func ParseExpression(x string) ( expr Ast.Expression, err error ) {
   // node := Ast.BasicLiteral{}
-  
+
   buf := []string{}
   for i, c := range x {
     fmt.Println( i, c )
