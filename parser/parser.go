@@ -347,7 +347,10 @@ func ParseFile( filename string ) ( f *Ast.File, err error ) {
 
 func Parse( input string ) (f *Ast.File, err error) {
 
-  f = &Ast.File{}
+  f = &Ast.File{
+    Comments: make([]Ast.Comment, 0),
+    Nodes: make([]Ast.Node, 0),
+  }
 
   reader := strings.NewReader(input)
 
@@ -363,9 +366,10 @@ func Parse( input string ) (f *Ast.File, err error) {
 
   expect = -1
 
-  var node Ast.Node
+  // var node Ast.Node
   var genericDeclaration Ast.GenericDeclaration
   var subroutineDeclaration Ast.SubroutineDeclaration
+  var mainDeclaration Ast.MainDeclaration
   var subroutine bool = false
 
   for {
@@ -401,6 +405,9 @@ func Parse( input string ) (f *Ast.File, err error) {
         fmt.Println(" - Block starts (subroutine)...")
       } else {
         fmt.Println(" - Block starts (main)...")
+        mainDeclaration = Ast.MainDeclaration{
+          StartPos: token.Pos(currentPosition),
+        }
       }
 
     case token.SUBR:
@@ -440,9 +447,13 @@ func Parse( input string ) (f *Ast.File, err error) {
     case token.VAR_TYPE:
       if ch == "\n" || err == io.EOF {
         genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
-        node = &genericDeclaration
+        declaration := genericDeclaration
+
         fmt.Println( "*** genericDeclaration:", genericDeclaration)
         fmt.Println("VAR_TYPE =", stringBuf)
+
+        f.Nodes = append( f.Nodes , &declaration )
+
         buf = make([]byte, 0)
         expect = token.VAR_NAME
         ignore = true
@@ -450,10 +461,13 @@ func Parse( input string ) (f *Ast.File, err error) {
     case token.VAR_VALUE:
       if ch == "\n" || err == io.EOF {
         genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
-        node = &genericDeclaration
-        if node != nil {}
+        declaration := genericDeclaration
+
         fmt.Println( "*** genericDeclaration:", genericDeclaration)
         fmt.Println("VAR_VALUE =", stringBuf)
+
+        f.Nodes = append( f.Nodes , &declaration )
+
         buf = make([]byte, 0)
         expect = token.VAR_NAME
         ignore = true
@@ -484,9 +498,14 @@ func Parse( input string ) (f *Ast.File, err error) {
             subroutineDeclaration.EndPos = token.Pos( currentPosition - len(stringBuf))
             subroutineDeclaration.Body = parseBlockStatement(&block)
             fmt.Println( "*** subroutineDeclaration", subroutineDeclaration )
+            declaration := subroutineDeclaration
+            f.Nodes = append( f.Nodes, &declaration )
+          } else {
+            mainDeclaration.EndPos = token.Pos( currentPosition )
+            mainDeclaration.Body = parseBlockStatement(&block)
+            declaration := mainDeclaration
+            f.Nodes = append( f.Nodes, &declaration )
           }
-
-          // subroutineDeclaration.Body = block
 
           spew.Dump(block)
           fmt.Println("")
