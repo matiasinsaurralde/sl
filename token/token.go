@@ -22,8 +22,15 @@ const(
 
   START
   END
+  SUBR
+  SUBR_NAME
+  SUBR_RETURN
+  SUBR_RETURN_TYPE
 
   VAR
+  VAR_NAME
+  VAR_TYPE
+  VAR_VALUE
 
   LPAREN
   RPAREN
@@ -44,7 +51,14 @@ var tokens = [...]string{
   PRINT: "imprimir",
   START: "inicio",
   END: "fin",
+  SUBR:"subrutina",
+  SUBR_NAME: "SUBR_NAME",
+  SUBR_RETURN: "retorna",
+  SUBR_RETURN_TYPE: "SUBR_RETURN_TYPE",
   VAR: "var",
+  VAR_NAME: "VAR_NAME",
+  VAR_TYPE: "VAR_TYPE",
+  VAR_VALUE: "VAR_VALUE",
   LPAREN: "(",
   RPAREN: ")",
   EXPR: "EXPR",
