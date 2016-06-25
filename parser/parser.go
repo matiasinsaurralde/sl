@@ -4,6 +4,8 @@ import(
   "github.com/matiasinsaurralde/sl/ast"
   "github.com/matiasinsaurralde/sl/token"
 
+  goparser "go/parser"
+
   "os"
   "bufio"
 
@@ -330,4 +332,29 @@ func ParseFile( filename string ) ( f *Ast.File, err error ) {
   fmt.Println( "\n- Scope:", f.Scope, "\n")
 
   return f, err
+}
+
+func ParseExpression(x string) ( expr Ast.Expression, err error ) {
+  // node := Ast.BasicLiteral{}
+  
+  buf := []string{}
+  for i, c := range x {
+    fmt.Println( i, c )
+    ch := string(c)
+    appendToBuffer := false
+    switch ch {
+    case " ":
+      appendToBuffer = false
+    default:
+      appendToBuffer = true
+    }
+
+    if appendToBuffer {
+      buf = append(buf, ch)
+    }
+  }
+
+  fmt.Println("Buffer:", buf, len(buf))
+  // expr = &node
+  return expr, err
 }
