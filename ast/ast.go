@@ -19,6 +19,26 @@ type Node interface {
   End() token.Pos
 }
 
+/* New structures */
+
+type SubroutineDeclaration struct {
+  Name string
+  // Recv  *FieldList methods or nil
+  Body *BlockStatement
+  Scope *Scope
+
+  StartPos token.Pos
+  EndPos token.Pos
+}
+
+func( s *SubroutineDeclaration ) Pos() token.Pos {
+  return s.StartPos
+}
+
+func( s *SubroutineDeclaration ) End() token.Pos {
+  return s.EndPos
+}
+
 type RoutineLiteral struct {
   // Type *RoutineType
   // Body BlockStatement
@@ -81,6 +101,7 @@ type Comment struct {
 
 type GenericDeclaration struct {
   Name string
+  Type token.Pos
   Values []Expression
   StartPos token.Pos
   EndPos token.Pos
