@@ -2,6 +2,8 @@ package token
 
 type Token int
 
+type Pos int
+
 const(
   _ = iota
   EOL
@@ -16,6 +18,9 @@ const(
   ASSIGN
 
   PROGRAM
+
+  START
+  END
 )
 
 var tokens = [...]string{
@@ -28,6 +33,8 @@ var tokens = [...]string{
   STRING: "STRING",
   ASSIGN: "=",
   PROGRAM: "programa",
+  START: "inicio",
+  END: "fin",
 }
 
 
