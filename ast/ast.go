@@ -10,6 +10,7 @@ type File struct {
   ProgramName string
   File *os.File
   Scope *Scope
+  Nodes []Node
 
   Comments []Comment
 }
@@ -37,6 +38,23 @@ func( s *SubroutineDeclaration ) Pos() token.Pos {
 
 func( s *SubroutineDeclaration ) End() token.Pos {
   return s.EndPos
+}
+
+type MainDeclaration struct {
+  // Recv  *FieldList methods or nil
+  Body *BlockStatement
+  Scope *Scope
+
+  StartPos token.Pos
+  EndPos token.Pos
+}
+
+func( m *MainDeclaration ) Pos() token.Pos {
+  return m.StartPos
+}
+
+func( m *MainDeclaration ) End() token.Pos {
+  return m.EndPos
 }
 
 type RoutineLiteral struct {
