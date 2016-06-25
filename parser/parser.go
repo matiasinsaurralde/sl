@@ -482,7 +482,7 @@ func Parse( input string ) (f *Ast.File, err error) {
 
           if subroutine {
             subroutineDeclaration.EndPos = token.Pos( currentPosition - len(stringBuf))
-            subroutineDeclaration.Body = parseBlockStatement(&stringBuf)
+            subroutineDeclaration.Body = parseBlockStatement(&block)
             fmt.Println( "*** subroutineDeclaration", subroutineDeclaration )
           }
 
