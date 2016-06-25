@@ -32,7 +32,7 @@ func parseBlockStatement( body *string ) *Ast.BlockStatement {
     rawStatement := scanner.Text()
     rawStatement = strings.Replace(rawStatement, "\n", "", -1)
     if len(rawStatement) > 0 {
-      fmt.Println(" * Statement:", rawStatement )
+      // fmt.Println(" * Statement:", rawStatement )
       buf := make([]byte, 0)
 
       for _, ch := range rawStatement {
@@ -133,7 +133,7 @@ func parseDeclarations( body string ) []Ast.Node {
     node = &Ast.GenericDeclaration{
       Name: splits[0],
     }
-    fmt.Println(" * Node:", node)
+    // fmt.Println(" * Node:", node)
 
     declarations = append(declarations, node)
 
@@ -152,7 +152,7 @@ func parseDeclarations( body string ) []Ast.Node {
 
     node = genericDeclaration
 
-    fmt.Println(" * Node:", node)
+    // fmt.Println(" * Node:", node)
 
     parseExpressions( &expressions, splits[1])
     // fmt.Println("Expressions:", splits[1], expressions[0])
@@ -358,7 +358,7 @@ func Parse( input string ) (f *Ast.File, err error) {
 
   currentPosition := 0
 
-  spew.Dump(1)
+  //spew.Dump(1)
 
   var tok, expect token.Token
 
@@ -391,20 +391,20 @@ func Parse( input string ) (f *Ast.File, err error) {
 
     switch tok {
     case token.VAR:
-      fmt.Println("*** Definicion", stringBuf, expect, ch)
+      // fmt.Println("*** Definicion", stringBuf, expect, ch)
       expect = token.VAR_NAME
       buf = make([]byte, 0)
     case token.START:
-      fmt.Println("bexpect", expect)
+      // fmt.Println("bexpect", expect)
       expect = token.END
       buf = make([]byte, 0)
       ignore = true
       block = ""
 
       if subroutine {
-        fmt.Println(" - Block starts (subroutine)...")
+        // fmt.Println(" - Block starts (subroutine)...")
       } else {
-        fmt.Println(" - Block starts (main)...")
+        // fmt.Println(" - Block starts (main)...")
         mainDeclaration = Ast.MainDeclaration{
           StartPos: token.Pos(currentPosition),
         }
@@ -429,7 +429,7 @@ func Parse( input string ) (f *Ast.File, err error) {
           Name: stringBuf,
           StartPos: token.Pos( currentPosition - len( stringBuf ) ),
         }
-        fmt.Println("VAR_NAME =",stringBuf)
+        // fmt.Println("VAR_NAME =",stringBuf)
         buf = make([]byte, 0)
         expect = token.VAR_TYPE
         ignore = true
@@ -439,7 +439,7 @@ func Parse( input string ) (f *Ast.File, err error) {
           Name: stringBuf,
           StartPos: token.Pos( currentPosition - len( stringBuf ) ),
         }
-        fmt.Println("VAR_NAME =",stringBuf)
+        // fmt.Println("VAR_NAME =",stringBuf)
         buf = make([]byte, 0)
         expect = token.VAR_VALUE
         ignore = true
@@ -449,8 +449,8 @@ func Parse( input string ) (f *Ast.File, err error) {
         genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
         declaration := genericDeclaration
 
-        fmt.Println( "*** genericDeclaration:", genericDeclaration)
-        fmt.Println("VAR_TYPE =", stringBuf)
+        // fmt.Println( "*** genericDeclaration:", genericDeclaration)
+        // fmt.Println("VAR_TYPE =", stringBuf)
 
         f.Nodes = append( f.Nodes , &declaration )
 
@@ -463,8 +463,8 @@ func Parse( input string ) (f *Ast.File, err error) {
         genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
         declaration := genericDeclaration
 
-        fmt.Println( "*** genericDeclaration:", genericDeclaration)
-        fmt.Println("VAR_VALUE =", stringBuf)
+        // fmt.Println( "*** genericDeclaration:", genericDeclaration)
+        // fmt.Println("VAR_VALUE =", stringBuf)
 
         f.Nodes = append( f.Nodes , &declaration )
 
@@ -514,8 +514,7 @@ func Parse( input string ) (f *Ast.File, err error) {
           expect = -1
         }
       }
-      // lastChars := stringBuf[ len(stringBuf) - 3 : len(stringBuf) ]
-      // fmt.Println( "***", lastChars)
+
     case token.SUBR_NAME:
       charTok := token.Lookup(ch)
       switch charTok {
