@@ -1,0 +1,21 @@
+box: golang
+
+build:
+  steps:
+    - setup-go-workspace
+
+    - script:
+        name: go get
+        code: |
+          go get
+          cd ./parser && go get
+
+    - script:
+        name: go build
+        code: |
+          go build ./parser
+
+    - script:
+        name: go test
+        code: |
+          go test ./parser
