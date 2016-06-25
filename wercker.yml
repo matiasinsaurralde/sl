@@ -7,7 +7,6 @@ build:
     - script:
         name: go get
         code: |
-          go get
           cd ./parser && go get
 
     - script:
