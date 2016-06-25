@@ -18,9 +18,17 @@ const(
   ASSIGN
 
   PROGRAM
+  PRINT
 
   START
   END
+
+  VAR
+
+  LPAREN
+  RPAREN
+
+  EXPR
 )
 
 var tokens = [...]string{
@@ -33,8 +41,13 @@ var tokens = [...]string{
   STRING: "STRING",
   ASSIGN: "=",
   PROGRAM: "programa",
+  PRINT: "imprimir",
   START: "inicio",
   END: "fin",
+  VAR: "var",
+  LPAREN: "(",
+  RPAREN: ")",
+  EXPR: "EXPR",
 }
 
 
