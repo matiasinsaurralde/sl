@@ -1,5 +1,8 @@
 # sl
 
+[![Wercker][wercker-image]][wercker-url]
+[![MIT License][license-image]][license-url]
+
 Intérprete experimental de SL, basado en Go.
 
 ## Ideas
@@ -101,3 +104,8 @@ mundo
 # Licencia
 
 [MIT](https://github.com/matiasinsaurralde/sl/blob/master/LICENSE)
+
+[wercker-image]: https://app.wercker.com/status/2b1d6102e8ba50ad9f74131c030f04fe/s/master
+[wercker-url]: https://app.wercker.com/project/bykey/2b1d6102e8ba50ad9f74131c030f04fe
+[license-url]: https://github.com/matiasinsaurralde/sl/blob/master/LICENSE
+[license-image]: http://img.shields.io/badge/license-MIT-blue.svg?style=flat
