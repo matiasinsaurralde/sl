@@ -7,7 +7,7 @@ import(
 )
 
 func main() {
-  fmt.Println("AST Test Program\n")
+  fmt.Println("Test Program\n")
   f, err := parser.ParseFile("ejemplos/holamundo.sl")
 
   if err != nil {
@@ -16,7 +16,7 @@ func main() {
 
   fmt.Println("")
   fmt.Println("Ast.File:")
-  
+
   fmt.Println(f)
 
   parser.Run( f )
