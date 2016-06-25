@@ -16,5 +16,8 @@ func main() {
 
   fmt.Println("")
   fmt.Println("Ast.File:")
+  
   fmt.Println(f)
+
+  parser.Run( f )
 }
