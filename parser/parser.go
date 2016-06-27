@@ -8,11 +8,11 @@ import(
   // goparser "go/parser"
   // goast "go/ast"
 
-  // "os"
   "bufio"
   "io"
 
   "strings"
+  "strconv"
 
   "fmt"
 )
@@ -67,8 +67,6 @@ func parseBlockStatement( body *string ) *Ast.BlockStatement {
 
             bs.List = append( bs.List, statement)
 
-            // blockStatement.List = append(blockStatement.List, statement)
-
             expect = -1
           }
         default:
@@ -81,34 +79,138 @@ func parseBlockStatement( body *string ) *Ast.BlockStatement {
   return &bs
 }
 
-func parseExpression( expr string ) Ast.Expression {
-  // e := Ast.Expression{}
-  var e Ast.Expression
-  if strings.Index( expr, "+") > 0 {
+func parseExpression( x string, node Ast.Node, topExpr Ast.Expression ) Ast.Expression {
+  fmt.Println("***parseExpression", x, node )
 
-    splits := strings.Split(expr, "+")
+  reader := strings.NewReader(x)
 
-    b := &Ast.BinaryExpression{
-      X: &Ast.BasicLiteral{Value: splits[0]},
-      Y: &Ast.BasicLiteral{Value: splits[1]},
+  var be Ast.BinaryExpression
+
+  var isBinaryExpr bool = false
+
+  for {
+    b, err := reader.ReadByte()
+    ch := string(b)
+
+    if isOperator(ch) {
+      isBinaryExpr = true
+      break
     }
-    e = b
 
-    // b.X = literalX
-    // b.Y = literalY
-    return e
+    if err != nil {
+      break
+    }
   }
 
-  // Basic literal?
-  b := &Ast.BasicLiteral{
-    Value: expr,
+  reader.Seek(0, 0)
+
+  if isBinaryExpr {
+    be = Ast.BinaryExpression{}
   }
-  return b
+
+  var tokType token.Token
+  var tok Ast.Expression
+
+  var nextCh string
+
+  read := 0
+
+  for {
+    b, err := reader.ReadByte()
+    ch := string(b)
+    // stringBuf := string(buf)
+
+    if read + 2 < len(x) {
+      nextCh = x[read+1:read+2]
+    }
+
+    if isOperator(ch) && topExpr != nil {
+      // var topBe Ast.BinaryExpression
+      // topBe.X = topExpr
+      // topBe.Y = nil
+      be.X = topExpr
+      be.Operator = ch
+    }
+
+    if be.X != nil && be.Y == nil && tokType == token.INT && isNumber(ch) {
+      tok.(*Ast.BasicLiteral).Value = tok.(*Ast.BasicLiteral).Value + ch
+    }
+
+    if be.X == nil && be.Y == nil && isNumber(ch) {
+      tok = &Ast.BasicLiteral{
+        Value: ch,
+        Kind: token.INT,
+      }
+      be.X = tok
+      tokType = token.INT
+    }
+
+    if be.X != nil && tokType != token.OP && len(be.Operator) == 0 && isOperator(ch) {
+      be.Operator = ch
+      tokType = token.OP
+    }
+
+    if be.X != nil && be.Y != nil && tokType == token.INT && isNumber(ch) {
+      tok.(*Ast.BasicLiteral).Value = tok.(*Ast.BasicLiteral).Value + ch
+    }
+
+    if be.X != nil && be.Y == nil && tokType == token.OP && isNumber(ch) {
+      tok = &Ast.BasicLiteral{
+        Value: ch,
+        Kind: token.INT,
+      }
+      be.Y = tok
+      tokType = token.INT
+    }
+
+    read++
+
+    if isOperator(nextCh) && len( be.Operator ) > 0 {
+
+      fmt.Println("Fin...", be)
+
+      s := x[read:len(x)]
+      var ex Ast.Expression
+      ex = &be
+
+      xd := parseExpression( s, node, ex )
+      return xd
+
+      break
+    }
+
+    if err != nil {
+      if be.X != nil && be.Y != nil && len(be.Operator) > 0 {
+        fmt.Println("OPA? Read:", read, "Total length:", len(x), nextCh)
+      }
+      break
+    }
+  }
+
+  fmt.Println("BinaryExpression", be, "X =",be.X, "Y=",be.Y)
+
+  return nil
+
+}
+
+func isNumber(input string) bool {
+  _, err := strconv.ParseInt( input, 10, 32 )
+  return err == nil
+}
+
+func isOperator(input string) bool {
+  operators := "+-*"
+  return strings.Contains(operators, input)
+}
+
+func isLetter(input string) bool {
+  abc := "abcdefghijklmnopqrstuvwxyz"
+  return strings.Contains(abc, input)
 }
 
 func parseExpressions( expressions *[]Ast.Expression, expr string ) {
-  e := parseExpression(expr)
-  *expressions = append( *expressions, e )
+  // e := parseExpression(expr)
+  // *expressions = append( *expressions, e )
 }
 
 func parseDeclarations( body string ) []Ast.Node {
@@ -151,12 +253,7 @@ func parseDeclarations( body string ) []Ast.Node {
     }
 
     node = genericDeclaration
-
-    // fmt.Println(" * Node:", node)
-
     parseExpressions( &expressions, splits[1])
-    // fmt.Println("Expressions:", splits[1], expressions[0])
-    // fmt.Println("* Node:", node)
 
     declarations = append(declarations, node)
 
@@ -165,185 +262,6 @@ func parseDeclarations( body string ) []Ast.Node {
 
   return declarations
 }
-
-/*
-func ParseFile( filename string ) ( f *Ast.File, err error ) {
-
-  var file *os.File
-
-  file, err = os.Open( filename )
-
-  f = &Ast.File{
-    Name: filename,
-    File: file,
-    Comments: make([]Ast.Comment, 0),
-  }
-
-  r := bufio.NewReader(file)
-  buf := make([]byte, 1)
-  v := make([]byte, 0)
-
-  startPos := 0
-  currentPos := 0
-
-  var expect token.Token
-  expect = -1
-
-  fmt.Println("Parse...")
-
-  var node Ast.Node
-
-  var globalScope Ast.Scope
-  globalScope = Ast.Scope{}
-
-  for {
-    _, err := r.Read(buf)
-
-    var keep bool
-    keep = false
-
-    switch buf[0] {
-    case 32: // " "
-
-      tok := token.Lookup(string(v))
-
-      if expect == -1 {
-        switch tok {
-        case token.PROGRAM:
-          v = make([]byte, 0)
-          expect = token.IDENT
-        default:
-          v = make([]byte, 0)
-        }
-      } else {
-        switch expect {
-        case token.COMMENT_END:
-          keep = true
-        case token.END:
-          keep = true
-        case token.VAR:
-          // fmt.Println("?Var", string(v), len(v))
-          keep = true
-        default:
-          v = make([]byte, 0)
-        }
-      }
-    case 10: // "\n"
-
-      value := string(v)
-      value = strings.Replace(value, "\n", "", -1)
-
-      tok := token.Lookup(value)
-
-      switch expect {
-      case token.IDENT:
-        fmt.Println("\n- Found a program: ", string(v))
-        f.ProgramName = string(v)
-        expect = -1
-      case token.COMMENT_END:
-        keep = true
-      case token.END:
-
-        s := string(v)
-
-        endSt := s[ len(s)-3 : len(s) ]
-        tok = token.Lookup(string(endSt))
-
-        if tok == token.END {
-
-          routineLiteral := node.(*Ast.RoutineLiteral)
-          routineLiteral.EndPos = token.Pos(currentPos)
-
-          body := s[0:len(s)-3]
-
-          parseBlockStatement( routineLiteral.Body, body )
-
-          expect = -1
-          v = make([]byte, 0)
-
-          // fmt.Println("\nBlock ends")
-
-        } else {
-          keep = true
-        }
-      case token.VAR:
-        keep = true
-        // fmt.Println("Var declaration...", string(v))
-        declarations := parseDeclarations(string(v))
-
-        for _, d := range declarations {
-          globalScope.Declarations = append( globalScope.Declarations, d )
-        }
-
-        v = make([]byte, 0)
-      }
-
-      switch tok {
-      case token.START:
-        fmt.Println("\n- Found a block\n")
-
-        expect = token.END
-        v = make([]byte,0)
-
-        routineLiteral := &Ast.RoutineLiteral{
-          StartPos: token.Pos(currentPos),
-          Body: &Ast.BlockStatement{
-            List: make([]Ast.Statement, 0),
-          },
-        }
-
-        node = routineLiteral
-
-        globalScope.Nodes = append(globalScope.Nodes, node)
-      case token.VAR:
-        fmt.Println("- Declaration:\n")
-        v = make([]byte, 0)
-        keep = true
-        expect = token.VAR
-      }
-    case 47: // "/"
-      if expect == -1 {
-        v = make([]byte, 0)
-        expect = token.COMMENT_START
-
-        startPos = currentPos
-      }
-      if expect == token.COMMENT_END {
-        fmt.Println( "\n- Found a comment...", string(v))
-        comment := Ast.Comment{
-          StartPos: token.Pos(startPos), EndPos: token.Pos(currentPos), Text: string(v),
-        }
-        f.Comments = append( f.Comments, comment )
-        v = make([]byte, 0)
-        expect = -1
-      }
-    case 42: // "*"
-      if expect == token.COMMENT_START {
-        expect = token.COMMENT_END
-        v = make([]byte, 0)
-      }
-    default:
-      v = append(v, buf[0])
-    }
-
-    if keep {
-      v = append(v, buf[0])
-    }
-
-    currentPos++
-
-    if err != nil {
-      break
-    }
-  }
-
-  f.Scope  = &globalScope
-
-  fmt.Println( "\n- Scope:", f.Scope, "\n")
-
-  return f, err
-}
-*/
 
 func Parse( input string ) (f *Ast.File, err error) {
 
@@ -358,15 +276,12 @@ func Parse( input string ) (f *Ast.File, err error) {
 
   currentPosition := 0
 
-  //spew.Dump(1)
-
   var tok, expect token.Token
 
   var block string = ""
 
   expect = -1
 
-  // var node Ast.Node
   var genericDeclaration Ast.GenericDeclaration
   var subroutineDeclaration Ast.SubroutineDeclaration
   var mainDeclaration Ast.MainDeclaration
@@ -383,19 +298,11 @@ func Parse( input string ) (f *Ast.File, err error) {
 
     tok = token.Lookup(stringBuf)
 
-    // spew.Dump(stringBuf)
-    // spew.Dump(stringBuf, expect)
-    // fmt.Println("")
-
-    // spew.Dump(stringBuf, tok)
-
     switch tok {
     case token.VAR:
-      // fmt.Println("*** Definicion", stringBuf, expect, ch)
       expect = token.VAR_NAME
       buf = make([]byte, 0)
     case token.START:
-      // fmt.Println("bexpect", expect)
       expect = token.END
       buf = make([]byte, 0)
       ignore = true
@@ -464,7 +371,8 @@ func Parse( input string ) (f *Ast.File, err error) {
         declaration := genericDeclaration
 
         // fmt.Println( "*** genericDeclaration:", genericDeclaration)
-        // fmt.Println("VAR_VALUE =", stringBuf)
+        fmt.Println("VAR_VALUE =", stringBuf)
+        parseExpression(stringBuf, &genericDeclaration, nil)
 
         f.Nodes = append( f.Nodes , &declaration )
 
@@ -560,15 +468,6 @@ func Parse( input string ) (f *Ast.File, err error) {
       ignore = true
     }
 
-    /*
-    if len(stringBuf) > 2 {
-      if stringBuf[0:1] == "\n" {
-        buf = buf[1:len(buf)]
-        ignore = true
-      }
-    }
-    */
-
     if !ignore {
       buf = append( buf, b )
     }
@@ -584,32 +483,5 @@ func Parse( input string ) (f *Ast.File, err error) {
 
   }
 
-  // fmt.Println("buf", string(buf))
-
   return f, err
-}
-
-func ParseExpression(x string) ( expr Ast.Expression, err error ) {
-  // node := Ast.BasicLiteral{}
-
-  buf := []string{}
-  for i, c := range x {
-    fmt.Println( i, c )
-    ch := string(c)
-    appendToBuffer := false
-    switch ch {
-    case " ":
-      appendToBuffer = false
-    default:
-      appendToBuffer = true
-    }
-
-    if appendToBuffer {
-      buf = append(buf, ch)
-    }
-  }
-
-  fmt.Println("Buffer:", buf, len(buf))
-  // expr = &node
-  return expr, err
 }
