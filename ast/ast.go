@@ -134,7 +134,7 @@ type Comment struct {
 type GenericDeclaration struct {
   Name string
   Type token.Pos
-  Values []Expression
+  Values Expression
   StartPos token.Pos
   EndPos token.Pos
 }
