@@ -74,6 +74,20 @@ func( r *RoutineLiteral ) End() token.Pos {
   return r.EndPos
 }
 
+type Ident struct {
+  Name string
+  StartPos token.Pos
+  EndPos token.Pos
+}
+
+func( i *Ident ) Pos() token.Pos {
+  return i.StartPos
+}
+
+func( i *Ident ) End() token.Pos {
+  return i.EndPos
+}
+
 type RoutineType struct {
 
 }
@@ -151,6 +165,7 @@ func( b *BasicLiteral ) End() token.Pos {
 
 type BinaryExpression struct {
   X Expression
+  Operator string
   StartPos token.Pos
   EndPos token.Pos
   Y Expression
