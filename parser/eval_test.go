@@ -4,7 +4,7 @@ import(
   "github.com/matiasinsaurralde/sl/parser"
   "github.com/matiasinsaurralde/sl/token"
   "github.com/matiasinsaurralde/sl/ast"
-  "fmt"
+  // "fmt"
   "testing"
 )
 
@@ -89,7 +89,7 @@ func TestComplexMixedBinaryExpr( t *testing.T ) {
   expr = parser.Eval(source, nil).(*Ast.BinaryExpression)
 
   xExpr = expr.X.(*Ast.BinaryExpression)
-  yExpr = expr.X.(*Ast.BinaryExpression)
+  yExpr = expr.Y.(*Ast.BinaryExpression)
 
   var xxLiteral, xyLiteral, yxLiteral, yyLiteral *Ast.BasicLiteral
   xxLiteral = xExpr.X.(*Ast.BasicLiteral)
@@ -102,12 +102,8 @@ func TestComplexMixedBinaryExpr( t *testing.T ) {
   assertLiteral( yxLiteral, token.STRING, t )
   assertLiteral( yyLiteral, token.INT, t )
 
-  // assertOperator( expr, "+", t )
-  // assertOperator( xExpr, "+", t )
-  // assertOperator( yExpr, "+", t )
-
-  fmt.Println("expr", expr.Operator)
-  fmt.Println("xexpr", xExpr.Operator)
-  fmt.Println("yexpr", yExpr.Operator)
+  assertOperator( expr, "-", t )
+  assertOperator( xExpr, "+", t )
+  assertOperator( yExpr, "*", t )
 
 }
