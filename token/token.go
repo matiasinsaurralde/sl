@@ -6,6 +6,7 @@ type Pos int
 
 const(
   _ = iota
+  DUMMY
   EOL
   COMMENT
   COMMENT_START
@@ -36,9 +37,11 @@ const(
   RPAREN
 
   EXPR
+  OP
 )
 
 var tokens = [...]string{
+  DUMMY: "DUMMY",
   EOL: "EOL",
   COMMENT: "COMMENT",
   COMMENT_START: "/*",
@@ -62,6 +65,7 @@ var tokens = [...]string{
   LPAREN: "(",
   RPAREN: ")",
   EXPR: "EXPR",
+  OP: "OP",
 }
 
 
