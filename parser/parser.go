@@ -237,10 +237,10 @@ func Parse( input string ) (f *Ast.File, err error) {
     case token.VAR_VALUE:
       if ch == "\n" || err == io.EOF {
         genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf) )
+
         declaration := genericDeclaration
-
-        genericDeclaration.Values = Eval(stringBuf, nil )
-
+        declaration.Values = Eval(stringBuf, nil )
+        
         f.Nodes = append( f.Nodes , &declaration )
 
         buf = make([]byte, 0)
@@ -341,7 +341,7 @@ func Parse( input string ) (f *Ast.File, err error) {
 
     if err != nil {
       if err == io.EOF {
-        fmt.Println("*eof")
+        // fmt.Println("*eof")
       }
       break
     }
