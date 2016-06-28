@@ -1,13 +1,27 @@
-package parser
+package SL
 
 import(
   "github.com/matiasinsaurralde/sl/ast"
   "github.com/matiasinsaurralde/sl/token"
 
+  "io/ioutil"
   "strings"
   "fmt"
+  "log"
 )
 
+type Runtime struct {}
+
+func NewRuntime( filename string ) ( *Runtime, error ) {
+  var err error
+  runtime := Runtime{}
+  _, err = ioutil.ReadFile( filename )
+  return &runtime, err
+}
+
+func ( runtime *Runtime ) Start() {
+  log.Println("Starting")
+}
 
 func Call(call *Ast.CallExpression) {
   fmt.Println("Call:", call.Function, "(function)\n")
