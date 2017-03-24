@@ -1,23 +1,23 @@
 package main
 
-import(
-  "github.com/matiasinsaurralde/sl/parser"
+import (
+	"github.com/matiasinsaurralde/sl/parser"
 
-  "fmt"
+	"fmt"
 )
 
 func main() {
-  fmt.Println("Test Program\n")
-  f, err := parser.ParseFile("ejemplos/holamundo.sl")
+	fmt.Println("Test Program\n")
+	f, err := parser.ParseFile("ejemplos/holamundo.sl")
 
-  if err != nil {
-    panic(err)
-  }
+	if err != nil {
+		panic(err)
+	}
 
-  fmt.Println("")
-  fmt.Println("Ast.File:")
+	fmt.Println("")
+	fmt.Println("Ast.File:")
 
-  fmt.Println(f)
+	fmt.Println(f)
 
-  parser.Run( f )
+	parser.Run(f)
 }
