@@ -1,147 +1,147 @@
 package parser
 
-import(
-  "strings"
-  "strconv"
+import (
+	"strconv"
+	"strings"
 
-  "github.com/matiasinsaurralde/sl/ast"
-  "github.com/matiasinsaurralde/sl/token"
+	"github.com/matiasinsaurralde/sl/ast"
+	"github.com/matiasinsaurralde/sl/token"
 )
 
-func Eval(x string, rootExpression Ast.Expression ) Ast.Expression {
-  var ex Ast.Expression
+func Eval(x string, rootExpression Ast.Expression) Ast.Expression {
+	var ex Ast.Expression
 
-  reader := strings.NewReader( x )
+	reader := strings.NewReader(x)
 
-  var binaryExpr bool = false
+	var binaryExpr bool
 
-  for {
-    b, err := reader.ReadByte()
-    ch := string(b)
+	for {
+		b, err := reader.ReadByte()
+		ch := string(b)
 
-    if isOperator(ch) {
-      binaryExpr = true
-      break
-    }
+		if isOperator(ch) {
+			binaryExpr = true
+			break
+		}
 
-    if err != nil {
-      break
-    }
-  }
+		if err != nil {
+			break
+		}
+	}
 
-  reader.Seek( 0, 0 )
+	reader.Seek(0, 0)
 
-  if binaryExpr {
-    ex = EvalBinaryExpr( x, rootExpression )
-  } else {
-    ex = EvalLiteral( x, rootExpression  )
-  }
+	if binaryExpr {
+		ex = EvalBinaryExpr(x, rootExpression)
+	} else {
+		ex = EvalLiteral(x, rootExpression)
+	}
 
-  return ex
+	return ex
 }
 
-func EvalBinaryExpr( x string, rootExpression Ast.Expression ) Ast.Expression {
-  reader := strings.NewReader( x )
+func EvalBinaryExpr(x string, rootExpression Ast.Expression) Ast.Expression {
+	reader := strings.NewReader(x)
 
-  var e Ast.Expression
-  var be Ast.BinaryExpression
+	var e Ast.Expression
+	var be Ast.BinaryExpression
 
-  be = Ast.BinaryExpression{}
+	be = Ast.BinaryExpression{}
 
-  buf := make( []byte, 0 )
+	buf := make([]byte, 0)
 
-  operatorCount := 0
+	operatorCount := 0
 
-  for {
-    b, err := reader.ReadByte()
-    ch := string(b)
+	for {
+		b, err := reader.ReadByte()
+		ch := string(b)
 
-    buf = append( buf, b )
-    stringBuffer := string(buf)
+		buf = append(buf, b)
+		stringBuffer := string(buf)
 
-    if isOperator(ch) {
-      operatorCount++
-    }
+		if isOperator(ch) {
+			operatorCount++
+		}
 
-    if isOperator(ch) && be.X == nil {
-      be.Operator = ch
-      be.X = EvalLiteral( stringBuffer, nil )
-      buf = make([]byte, 0)
-    }
+		if isOperator(ch) && be.X == nil {
+			be.Operator = ch
+			be.X = EvalLiteral(stringBuffer, nil)
+			buf = make([]byte, 0)
+		}
 
-    if isOperator(ch) && operatorCount > 1 {
-      be.Y = EvalLiteral( stringBuffer, nil  )
-      read := reader.Size() - int64(reader.Len())
-      s := x[ read : len( x ) ]
-      var x Ast.Expression
-      x = &be
-      subexpr := Ast.BinaryExpression{
-        Operator: ch,
-        X: x,
-        Y: Eval(s, rootExpression),
-      }
-      e = &subexpr
-      break
-    }
+		if isOperator(ch) && operatorCount > 1 {
+			be.Y = EvalLiteral(stringBuffer, nil)
+			read := reader.Size() - int64(reader.Len())
+			s := x[read:len(x)]
+			var x Ast.Expression
+			x = &be
+			subexpr := Ast.BinaryExpression{
+				Operator: ch,
+				X:        x,
+				Y:        Eval(s, rootExpression),
+			}
+			e = &subexpr
+			break
+		}
 
-    if err != nil {
-      be.Y = EvalLiteral( stringBuffer, nil  )
-      e = &be
-      break
-    }
-  }
+		if err != nil {
+			be.Y = EvalLiteral(stringBuffer, nil)
+			e = &be
+			break
+		}
+	}
 
-  return e
+	return e
 }
 
-func EvalLiteral( x string, rootExpression Ast.Expression ) Ast.Expression {
-  reader := strings.NewReader( x )
+func EvalLiteral(x string, rootExpression Ast.Expression) Ast.Expression {
+	reader := strings.NewReader(x)
 
-  buf := make( []byte, 0 )
+	buf := make([]byte, 0)
 
-  var tok Ast.Expression
+	var tok Ast.Expression
 
-  for {
-    b, err := reader.ReadByte()
-    ch := string(b)
+	for {
+		b, err := reader.ReadByte()
+		ch := string(b)
 
-    if isLetter(ch) || isNumber(ch) {
-      buf = append( buf, b )
-    }
+		if isLetter(ch) || isNumber(ch) {
+			buf = append(buf, b)
+		}
 
-    if err != nil {
+		if err != nil {
 
-      stringBuffer := string(buf)
+			stringBuffer := string(buf)
 
-      if isNumber(stringBuffer) {
-        tok = &Ast.BasicLiteral{
-          Value: stringBuffer,
-          Kind: token.INT,
-        }
-      } else {
-        tok = &Ast.BasicLiteral{
-          Value: stringBuffer,
-          Kind: token.STRING,
-        }
-      }
+			if isNumber(stringBuffer) {
+				tok = &Ast.BasicLiteral{
+					Value: stringBuffer,
+					Kind:  token.INT,
+				}
+			} else {
+				tok = &Ast.BasicLiteral{
+					Value: stringBuffer,
+					Kind:  token.STRING,
+				}
+			}
 
-      break
-    }
-  }
-  return tok
+			break
+		}
+	}
+	return tok
 }
 
 func isNumber(input string) bool {
-  _, err := strconv.ParseInt( input, 10, 32 )
-  return err == nil
+	_, err := strconv.ParseInt(input, 10, 32)
+	return err == nil
 }
 
 func isOperator(input string) bool {
-  operators := "+-*"
-  return strings.Contains(operators, input)
+	operators := "+-*"
+	return strings.Contains(operators, input)
 }
 
 func isLetter(input string) bool {
-  abc := "abcdefghijklmnopqrstuvwxyz"
-  return strings.Contains(abc, input)
+	abc := "abcdefghijklmnopqrstuvwxyz"
+	return strings.Contains(abc, input)
 }
