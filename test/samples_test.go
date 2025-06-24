@@ -5,7 +5,7 @@ import (
 )
 
 func TestHolamundo(t *testing.T) {
-	result, err := RunSLProgram("../ejemplos/holamundo.sl", "")
+	result, err := RunSLProgram("../samples/holamundo.sl", "")
 	if err != nil {
 		t.Fatalf("failed to run holamundo.sl: %v", err)
 	}
@@ -15,7 +15,7 @@ func TestHolamundo(t *testing.T) {
 }
 
 func TestSuma(t *testing.T) {
-	result, err := RunSLProgram("../ejemplos/suma.sl", "10\n")
+	result, err := RunSLProgram("../samples/suma.sl", "10\n")
 	if err != nil {
 		t.Fatalf("failed to run suma.sl: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestSuma(t *testing.T) {
 }
 
 func TestSumaWithDifferentInput(t *testing.T) {
-	result, err := RunSLProgram("../ejemplos/suma.sl", "6\n")
+	result, err := RunSLProgram("../samples/suma.sl", "6\n")
 	if err != nil {
 		t.Fatalf("failed to run suma.sl with input 6: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestSumaWithDifferentInput(t *testing.T) {
 }
 
 func TestSumaWithZeroInput(t *testing.T) {
-	result, err := RunSLProgram("../ejemplos/suma.sl", "0\n")
+	result, err := RunSLProgram("../samples/suma.sl", "0\n")
 	if err != nil {
 		t.Fatalf("failed to run suma.sl with input 0: %v", err)
 	}

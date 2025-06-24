@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/matiasinsaurralde/sl/parser"
-	"github.com/matiasinsaurralde/sl/runtime"
+	"github.com/matiasinsaurralde/sl/pkg/parser"
+	"github.com/matiasinsaurralde/sl/pkg/runtime"
 )
 
 // TestResult holds the result of running an SL program

@@ -41,6 +41,8 @@ const (
 	RPAREN    // )
 	LBRACE    // {
 	RBRACE    // }
+	LBRACKET  // [
+	RBRACKET  // ]
 	COMMA     // ,
 	SEMICOLON // ;
 	COLON     // :
@@ -48,6 +50,7 @@ const (
 	// Keywords
 	PROGRAMA // programa
 	VAR      // var
+	CONST    // const
 	INICIO   // inicio
 	FIN      // fin
 	SUBR     // sub
@@ -58,8 +61,9 @@ const (
 	SI       // si
 	SINO     // sino
 	MIENTRAS // mientras
-	DESDE    // desde
+	REPETIR  // repetir
 	HASTA    // hasta
+	DESDE    // desde
 	PASO     // paso
 	TERMINAR // terminar
 
@@ -99,11 +103,14 @@ var tokens = [...]string{
 	RPAREN:    ")",
 	LBRACE:    "{",
 	RBRACE:    "}",
+	LBRACKET:  "[",
+	RBRACKET:  "]",
 	COMMA:     ",",
 	SEMICOLON: ";",
 	COLON:     ":",
 	PROGRAMA:  "programa",
 	VAR:       "var",
+	CONST:     "const",
 	INICIO:    "inicio",
 	FIN:       "fin",
 	SUBR:      "sub",
@@ -112,8 +119,9 @@ var tokens = [...]string{
 	SI:        "si",
 	SINO:      "sino",
 	MIENTRAS:  "mientras",
-	DESDE:     "desde",
+	REPETIR:   "repetir",
 	HASTA:     "hasta",
+	DESDE:     "desde",
 	PASO:      "paso",
 	TERMINAR:  "terminar",
 	IMPRIMIR:  "imprimir",

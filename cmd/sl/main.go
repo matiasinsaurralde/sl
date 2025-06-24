@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/matiasinsaurralde/sl/parser"
-	"github.com/matiasinsaurralde/sl/runtime"
+	"github.com/matiasinsaurralde/sl/pkg/parser"
+	"github.com/matiasinsaurralde/sl/pkg/runtime"
 )
 
 func main() {

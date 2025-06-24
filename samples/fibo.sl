@@ -2,7 +2,6 @@ programa fibo
 var
     a, b, c : numerico
     n : numerico;
-
 inicio
     leer (n);
     a = 0; b = 1;

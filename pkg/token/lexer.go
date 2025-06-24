@@ -51,6 +51,10 @@ func (l *Lexer) NextToken() TokenInfo {
 		return TokenInfo{Type: LBRACE, Literal: "{", Pos: pos, Line: line, Col: col}
 	case '}':
 		return TokenInfo{Type: RBRACE, Literal: "}", Pos: pos, Line: line, Col: col}
+	case '[':
+		return TokenInfo{Type: LBRACKET, Literal: "[", Pos: pos, Line: line, Col: col}
+	case ']':
+		return TokenInfo{Type: RBRACKET, Literal: "]", Pos: pos, Line: line, Col: col}
 	case ',':
 		return TokenInfo{Type: COMMA, Literal: ",", Pos: pos, Line: line, Col: col}
 	case ';':

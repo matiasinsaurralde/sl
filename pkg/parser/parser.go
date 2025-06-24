@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/matiasinsaurralde/sl/ast"
-	"github.com/matiasinsaurralde/sl/token"
+	"github.com/matiasinsaurralde/sl/pkg/ast"
+	"github.com/matiasinsaurralde/sl/pkg/token"
 )
 
 type Parser struct {
@@ -136,21 +136,75 @@ func (p *Parser) parseProgram() *ast.Program {
 func (p *Parser) parseVariableDeclarations() []ast.Node {
 	var declarations []ast.Node
 
-	p.nextToken() // consume 'var'
+	for p.curTokenIs(token.VAR) || p.curTokenIs(token.CONST) {
+		if p.curTokenIs(token.VAR) {
+			p.nextToken() // consume 'var'
 
-	for !p.curTokenIs(token.INICIO) && !p.curTokenIs(token.SUBR) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.EOL) {
-			p.nextToken()
-			continue
+			// Parse variable name list
+			names := p.parseVariableNameList()
+
+			// Parse type declaration
+			if p.curTokenIs(token.COLON) {
+				p.nextToken() // consume ':'
+				if p.curTokenIs(token.NUMERICO) {
+					typeName := p.curToken.Literal
+					p.nextToken()
+
+					// Create a declaration for each variable name
+					for _, name := range names {
+						decl := &ast.VariableDeclaration{
+							Name:     name,
+							Type:     typeName,
+							StartPos: p.curToken.Pos,
+						}
+						declarations = append(declarations, decl)
+					}
+				}
+			}
+		} else if p.curTokenIs(token.CONST) {
+			p.nextToken() // consume 'const'
+
+			// Parse constant declaration
+			if p.curTokenIs(token.IDENT) {
+				decl := p.parseConstantDeclaration()
+				if decl != nil {
+					declarations = append(declarations, decl)
+				}
+			}
 		}
 
-		decl := p.parseVariableDeclaration()
-		if decl != nil {
-			declarations = append(declarations, decl)
+		// Skip semicolons and EOL tokens
+		for p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.EOL) {
+			p.nextToken()
 		}
 	}
 
 	return declarations
+}
+
+func (p *Parser) parseVariableNameList() []string {
+	var names []string
+
+	// Parse the first variable name
+	if p.curTokenIs(token.IDENT) {
+		names = append(names, p.curToken.Literal)
+		p.nextToken()
+	} else {
+		return names
+	}
+
+	// Parse additional variable names separated by commas
+	for p.curTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if p.curTokenIs(token.IDENT) {
+			names = append(names, p.curToken.Literal)
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	return names
 }
 
 func (p *Parser) parseVariableDeclaration() ast.Node {
@@ -178,6 +232,32 @@ func (p *Parser) parseVariableDeclaration() ast.Node {
 		}
 	} else if p.curTokenIs(token.ASSIGN) {
 		// Value assignment: var name = value
+		p.nextToken()
+		decl.Value = p.parseExpression()
+	}
+
+	decl.EndPos = p.curToken.Pos
+	return decl
+}
+
+func (p *Parser) parseConstantDeclaration() ast.Node {
+	startPos := p.curToken.Pos
+	name := p.curToken.Literal
+
+	if !p.curTokenIs(token.IDENT) {
+		p.nextToken()
+		return nil
+	}
+
+	p.nextToken()
+
+	decl := &ast.ConstantDeclaration{
+		Name:     name,
+		StartPos: startPos,
+	}
+
+	if p.curTokenIs(token.ASSIGN) {
+		// Value assignment: const name = value
 		p.nextToken()
 		decl.Value = p.parseExpression()
 	}
@@ -264,11 +344,12 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 		Statements: []ast.Statement{},
 	}
 
-	p.nextToken() // consume 'inicio' or '{'
+	// p.nextToken() // DO NOT advance here; let the loop handle the first statement
 
 	stmtIdx := 0
 	for !p.curTokenIs(token.FIN) && !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.EOL) {
+		// Skip EOL and semicolons at the beginning
+		if p.curTokenIs(token.EOL) || p.curTokenIs(token.SEMICOLON) {
 			p.nextToken()
 			continue
 		}
@@ -294,6 +375,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseIfStatement()
 	case token.MIENTRAS:
 		return p.parseWhileStatement()
+	case token.REPETIR:
+		return p.parseRepeatStatement()
 	case token.DESDE:
 		return p.parseForStatement()
 	case token.RETORNA:
@@ -377,6 +460,39 @@ func (p *Parser) parseWhileStatement() *ast.WhileStatement {
 
 	whileStmt.EndPos = p.curToken.Pos
 	return whileStmt
+}
+
+func (p *Parser) parseRepeatStatement() *ast.RepeatStatement {
+	repeatStmt := &ast.RepeatStatement{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'repetir'
+
+	// Parse the body (statements to repeat)
+	if p.curTokenIs(token.LBRACE) {
+		p.nextToken()
+		repeatStmt.Body = p.parseBlockStatement()
+	} else {
+		repeatStmt.Body = p.parseStatement()
+	}
+
+	// Parse the hasta condition
+	if p.curTokenIs(token.HASTA) {
+		p.nextToken()
+		if p.curTokenIs(token.LPAREN) {
+			p.nextToken()
+			repeatStmt.Condition = p.parseExpression()
+			if p.curTokenIs(token.RPAREN) {
+				p.nextToken()
+			}
+		} else {
+			repeatStmt.Condition = p.parseExpression()
+		}
+	}
+
+	repeatStmt.EndPos = p.curToken.Pos
+	return repeatStmt
 }
 
 func (p *Parser) parseForStatement() *ast.ForStatement {
@@ -468,8 +584,13 @@ func (p *Parser) parseAssignmentStatement() *ast.ExpressionStatement {
 		assignment.Right = p.parseExpression()
 	}
 
-	assignment.EndPos = assignment.Right.End()
-	assignment.Left.EndPos = assignment.EndPos
+	if assignment.Right != nil {
+		assignment.EndPos = assignment.Right.End()
+		assignment.Left.EndPos = assignment.EndPos
+	} else {
+		assignment.EndPos = p.curToken.Pos
+		assignment.Left.EndPos = assignment.EndPos
+	}
 
 	return &ast.ExpressionStatement{
 		Expression: assignment,
@@ -500,6 +621,22 @@ func (p *Parser) parseBinaryExpression(precedence int) ast.Expression {
 		// Don't treat assignment as a binary operator
 		if p.curTokenIs(token.ASSIGN) {
 			break
+		}
+
+		// Handle array indexing
+		if p.curTokenIs(token.LBRACKET) {
+			indexExpr := &ast.IndexExpression{
+				Left:     left,
+				StartPos: left.Pos(),
+			}
+			p.nextToken() // consume '['
+			indexExpr.Index = p.parseExpression()
+			if p.curTokenIs(token.RBRACKET) {
+				p.nextToken()
+			}
+			indexExpr.EndPos = p.curToken.Pos
+			left = indexExpr
+			continue
 		}
 
 		operator := p.curToken.Literal
@@ -559,7 +696,21 @@ func (p *Parser) parsePrimaryExpression() ast.Expression {
 	case token.INT, token.FLOAT:
 		return p.parseLiteral()
 	case token.STRING:
-		return p.parseLiteral()
+		lit := p.parseLiteral()
+		if p.curTokenIs(token.LBRACKET) {
+			indexExpr := &ast.IndexExpression{
+				Left:     lit,
+				StartPos: lit.Pos(),
+			}
+			p.nextToken() // consume '['
+			indexExpr.Index = p.parseExpression()
+			if p.curTokenIs(token.RBRACKET) {
+				p.nextToken()
+			}
+			indexExpr.EndPos = p.curToken.Pos
+			return indexExpr
+		}
+		return lit
 	case token.LPAREN:
 		p.nextToken()
 		expr := p.parseExpression()
@@ -658,6 +809,24 @@ func (p *Parser) parseIfValExpression() *ast.IfValExpression {
 
 	ifVal.EndPos = p.curToken.Pos
 	return ifVal
+}
+
+func (p *Parser) parseIndexExpression() *ast.IndexExpression {
+	indexExpr := &ast.IndexExpression{
+		Left:     p.parsePrimaryExpression(),
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume '['
+
+	indexExpr.Index = p.parseExpression()
+
+	if p.curTokenIs(token.RBRACKET) {
+		p.nextToken()
+	}
+
+	indexExpr.EndPos = p.curToken.Pos
+	return indexExpr
 }
 
 func (p *Parser) getPrecedence(t token.Token) int {

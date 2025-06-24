@@ -3,7 +3,7 @@ package ast
 import (
 	"os"
 
-	"github.com/matiasinsaurralde/sl/token"
+	"github.com/matiasinsaurralde/sl/pkg/token"
 )
 
 // File represents the root of an SL program
@@ -140,6 +140,18 @@ type WhileStatement struct {
 func (w *WhileStatement) Pos() token.Pos { return w.StartPos }
 func (w *WhileStatement) End() token.Pos { return w.EndPos }
 func (w *WhileStatement) statementNode() {}
+
+// RepeatStatement represents a repetir...hasta loop
+type RepeatStatement struct {
+	Body      Statement
+	Condition Expression
+	StartPos  token.Pos
+	EndPos    token.Pos
+}
+
+func (r *RepeatStatement) Pos() token.Pos { return r.StartPos }
+func (r *RepeatStatement) End() token.Pos { return r.EndPos }
+func (r *RepeatStatement) statementNode() {}
 
 // ForStatement represents a for loop (desde-hasta-paso)
 type ForStatement struct {
@@ -278,3 +290,25 @@ func (s *Scope) Get(name string) (interface{}, bool) {
 func (s *Scope) Set(name string, value interface{}) {
 	s.Variables[name] = value
 }
+
+type ConstantDeclaration struct {
+	Name     string
+	Value    Expression
+	StartPos token.Pos
+	EndPos   token.Pos
+}
+
+func (c *ConstantDeclaration) Pos() token.Pos { return c.StartPos }
+func (c *ConstantDeclaration) End() token.Pos { return c.EndPos }
+func (c *ConstantDeclaration) statementNode() {}
+
+type IndexExpression struct {
+	Left     Expression
+	Index    Expression
+	StartPos token.Pos
+	EndPos   token.Pos
+}
+
+func (i *IndexExpression) Pos() token.Pos  { return i.StartPos }
+func (i *IndexExpression) End() token.Pos  { return i.EndPos }
+func (i *IndexExpression) expressionNode() {}
