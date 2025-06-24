@@ -6,84 +6,139 @@ type Pos int
 
 const (
 	_ = iota
-	DUMMY
-	EOL
+	ILLEGAL
+	EOF
 	COMMENT
-	COMMENT_START
-	COMMENT_END
 
+	// Literals
 	IDENT
 	INT
+	FLOAT
 	STRING
 
-	ASSIGN
+	// Operators
+	ASSIGN   // =
+	PLUS     // +
+	MINUS    // -
+	MULTIPLY // *
+	DIVIDE   // /
+	MODULO   // %
 
-	PROGRAM
-	PRINT
+	// Comparison operators
+	EQ  // ==
+	NEQ // <>
+	LT  // <
+	LTE // <=
+	GT  // >
+	GTE // >=
 
-	START
-	END
-	SUBR
-	SUBR_NAME
-	SUBR_RETURN
-	SUBR_RETURN_TYPE
+	// Logical operators
+	AND // &&
+	OR  // or
 
-	VAR
-	VAR_NAME
-	VAR_TYPE
-	VAR_VALUE
+	// Delimiters
+	LPAREN    // (
+	RPAREN    // )
+	LBRACE    // {
+	RBRACE    // }
+	COMMA     // ,
+	SEMICOLON // ;
+	COLON     // :
 
-	LPAREN
-	RPAREN
+	// Keywords
+	PROGRAMA // programa
+	VAR      // var
+	INICIO   // inicio
+	FIN      // fin
+	SUBR     // sub
+	RETORNA  // retorna
+	NUMERICO // numerico
 
-	EXPR
-	OP
+	// Control flow
+	SI       // si
+	SINO     // sino
+	MIENTRAS // mientras
+	DESDE    // desde
+	HASTA    // hasta
+	PASO     // paso
+	TERMINAR // terminar
+
+	// Built-in functions
+	IMPRIMIR // imprimir
+	LEER     // leer
+	INT_FUNC // int
+	IFVAL    // ifval
+
+	// Special
+	EOL // end of line
 )
 
 var tokens = [...]string{
-	DUMMY:            "DUMMY",
-	EOL:              "EOL",
-	COMMENT:          "COMMENT",
-	COMMENT_START:    "/*",
-	COMMENT_END:      "*/",
-	IDENT:            "IDENT",
-	INT:              "INT",
-	STRING:           "STRING",
-	ASSIGN:           "=",
-	PROGRAM:          "programa",
-	PRINT:            "imprimir",
-	START:            "inicio",
-	END:              "fin",
-	SUBR:             "subrutina",
-	SUBR_NAME:        "SUBR_NAME",
-	SUBR_RETURN:      "retorna",
-	SUBR_RETURN_TYPE: "SUBR_RETURN_TYPE",
-	VAR:              "var",
-	VAR_NAME:         "VAR_NAME",
-	VAR_TYPE:         "VAR_TYPE",
-	VAR_VALUE:        "VAR_VALUE",
-	LPAREN:           "(",
-	RPAREN:           ")",
-	EXPR:             "EXPR",
-	OP:               "OP",
+	ILLEGAL:   "ILLEGAL",
+	EOF:       "EOF",
+	COMMENT:   "COMMENT",
+	IDENT:     "IDENT",
+	INT:       "INT",
+	FLOAT:     "FLOAT",
+	STRING:    "STRING",
+	ASSIGN:    "=",
+	PLUS:      "+",
+	MINUS:     "-",
+	MULTIPLY:  "*",
+	DIVIDE:    "/",
+	MODULO:    "%",
+	EQ:        "==",
+	NEQ:       "<>",
+	LT:        "<",
+	LTE:       "<=",
+	GT:        ">",
+	GTE:       ">=",
+	AND:       "&&",
+	OR:        "or",
+	LPAREN:    "(",
+	RPAREN:    ")",
+	LBRACE:    "{",
+	RBRACE:    "}",
+	COMMA:     ",",
+	SEMICOLON: ";",
+	COLON:     ":",
+	PROGRAMA:  "programa",
+	VAR:       "var",
+	INICIO:    "inicio",
+	FIN:       "fin",
+	SUBR:      "sub",
+	RETORNA:   "retorna",
+	NUMERICO:  "numerico",
+	SI:        "si",
+	SINO:      "sino",
+	MIENTRAS:  "mientras",
+	DESDE:     "desde",
+	HASTA:     "hasta",
+	PASO:      "paso",
+	TERMINAR:  "terminar",
+	IMPRIMIR:  "imprimir",
+	LEER:      "leer",
+	INT_FUNC:  "int",
+	IFVAL:     "ifval",
+	EOL:       "EOL",
 }
 
 func Lookup(input string) Token {
 	for i, v := range tokens {
 		if v == input {
 			return Token(i)
-			break
 		}
 	}
-	return -1
+	return IDENT // Default to identifier if not found
 }
 
 func Get(index int) string {
-	for k, v := range tokens {
-		if index == k {
-			return v
-			break
-		}
+	if index >= 0 && index < len(tokens) {
+		return tokens[index]
 	}
 	return ""
+}
+
+func (t Token) String() string {
+	return Get(int(t))
 }

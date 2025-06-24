@@ -1,354 +1,678 @@
 package parser
 
 import (
-	"github.com/matiasinsaurralde/sl/ast"
-	"github.com/matiasinsaurralde/sl/token"
-
-	"github.com/davecgh/go-spew/spew"
-	// goparser "go/parser"
-	// goast "go/ast"
-
-	"bufio"
+	"fmt"
 	"io"
-
 	"strings"
 
-	"fmt"
+	"github.com/matiasinsaurralde/sl/ast"
+	"github.com/matiasinsaurralde/sl/token"
 )
 
-func parseBlockStatement(body *string) *Ast.BlockStatement {
-	reader := strings.NewReader(*body)
-	scanner := bufio.NewScanner(reader)
-
-	bs := Ast.BlockStatement{}
-
-	var expect token.Token
-	expect = -1
-
-	var node Ast.Node
-
-	for scanner.Scan() {
-		rawStatement := scanner.Text()
-		rawStatement = strings.Replace(rawStatement, "\n", "", -1)
-		if len(rawStatement) > 0 {
-			// fmt.Println(" * Statement:", rawStatement )
-			buf := make([]byte, 0)
-
-			for _, ch := range rawStatement {
-
-				switch ch {
-				case 32: // " "
-				case 40: // (
-					tok := token.Lookup(string(buf))
-
-					switch tok {
-					case token.PRINT:
-						CallExpression := &Ast.CallExpression{
-							Function: string(buf),
-						}
-						node = CallExpression
-						expect = token.EXPR
-						buf = make([]byte, 0)
-					default:
-						buf = make([]byte, 0)
-					}
-				case 41: // ")"
-					if expect == token.EXPR {
-						rawExpressions := string(buf)
-
-						if rawExpressions == "" {
-						}
-
-						var CallExpression *Ast.CallExpression
-						CallExpression = node.(*Ast.CallExpression)
-
-						// parseExpressions(&CallExpression.Args, rawExpressions)
-
-						var statement Ast.Statement
-						statement = CallExpression
-
-						bs.List = append(bs.List, statement)
-
-						expect = -1
-					}
-				default:
-					buf = append(buf, byte(ch))
-				}
-			}
-		}
-	}
-
-	return &bs
+type Parser struct {
+	lexer     *token.Lexer
+	curToken  token.TokenInfo
+	peekToken token.TokenInfo
+	errors    []string
 }
 
-func parseDeclarations(body string) []Ast.Node {
-
-	declarations := make([]Ast.Node, 0)
-
-	body = strings.Replace(body, "\n", "", -1)
-	body = strings.Replace(body, " ", "", -1)
-
-	if len(body) == 0 {
-		return declarations
+func NewParser(input io.Reader) *Parser {
+	lexer := token.NewLexer(input)
+	p := &Parser{
+		lexer:  lexer,
+		errors: []string{},
 	}
 
-	var splits []string
+	// Read two tokens to initialize curToken and peekToken
+	p.nextToken()
+	p.nextToken()
 
-	splits = strings.Split(body, ":")
+	return p
+}
 
-	var node Ast.Node
+func (p *Parser) nextToken() {
+	p.curToken = p.peekToken
+	p.peekToken = p.lexer.NextToken()
+}
 
-	// x : type (no value)
-	if len(splits) == 2 {
-		node = &Ast.GenericDeclaration{
-			Name: splits[0],
-		}
-		// fmt.Println(" * Node:", node)
+func (p *Parser) curTokenIs(t token.Token) bool {
+	return p.curToken.Type == t
+}
 
-		declarations = append(declarations, node)
+func (p *Parser) peekTokenIs(t token.Token) bool {
+	return p.peekToken.Type == t
+}
 
-		return declarations
+func (p *Parser) expectPeek(t token.Token) bool {
+	if p.peekTokenIs(t) {
+		p.nextToken()
+		return true
+	}
+	p.peekError(t)
+	return false
+}
+
+func (p *Parser) peekError(t token.Token) {
+	msg := fmt.Sprintf("expected next token to be %s, got %s instead", t, p.peekToken.Type)
+	p.errors = append(p.errors, msg)
+}
+
+func (p *Parser) Errors() []string {
+	return p.errors
+}
+
+func Parse(input io.Reader) (*ast.File, error) {
+	parser := NewParser(input)
+	file := parser.parseFile()
+
+	if len(parser.errors) > 0 {
+		return nil, fmt.Errorf("parsing errors: %s", strings.Join(parser.errors, "; "))
 	}
 
-	splits = strings.Split(body, "=")
+	return file, nil
+}
 
-	// x = value (literal)
-	if len(splits) == 2 {
-		expressions := make([]Ast.Expression, 0)
-		genericDeclaration := &Ast.GenericDeclaration{
-			Name: splits[0],
+func (p *Parser) parseFile() *ast.File {
+	file := &ast.File{
+		Nodes:    []ast.Node{},
+		Comments: []ast.Comment{},
+	}
+
+	for p.curToken.Type != token.EOF {
+		switch p.curToken.Type {
+		case token.COMMENT:
+			comment := p.parseComment()
+			file.Comments = append(file.Comments, *comment)
+		case token.EOL:
+			p.nextToken() // skip EOL
+		case token.PROGRAMA:
+			program := p.parseProgram()
+			file.Nodes = append(file.Nodes, program)
+		case token.VAR:
+			declarations := p.parseVariableDeclarations()
+			for _, decl := range declarations {
+				file.Nodes = append(file.Nodes, decl)
+			}
+		case token.SUBR:
+			subroutine := p.parseSubroutineDeclaration()
+			file.Nodes = append(file.Nodes, subroutine)
+		case token.INICIO:
+			block := p.parseBlockStatement()
+			file.Nodes = append(file.Nodes, block)
+		default:
+			p.nextToken()
+		}
+	}
+
+	return file
+}
+
+func (p *Parser) parseComment() *ast.Comment {
+	comment := &ast.Comment{
+		Text:     p.curToken.Literal,
+		StartPos: p.curToken.Pos,
+		EndPos:   p.curToken.Pos + token.Pos(len(p.curToken.Literal)),
+	}
+	p.nextToken()
+	return comment
+}
+
+func (p *Parser) parseProgram() *ast.Program {
+	program := &ast.Program{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'programa'
+
+	if p.curTokenIs(token.IDENT) {
+		program.Name = p.curToken.Literal
+		p.nextToken()
+	}
+
+	program.EndPos = p.curToken.Pos
+	return program
+}
+
+func (p *Parser) parseVariableDeclarations() []ast.Node {
+	var declarations []ast.Node
+
+	p.nextToken() // consume 'var'
+
+	for !p.curTokenIs(token.INICIO) && !p.curTokenIs(token.SUBR) && !p.curTokenIs(token.EOF) {
+		if p.curTokenIs(token.EOL) {
+			p.nextToken()
+			continue
 		}
 
-		node = genericDeclaration
-		// parseExpressions( &expressions, splits[1])
-
-		if expressions == nil {
+		decl := p.parseVariableDeclaration()
+		if decl != nil {
+			declarations = append(declarations, decl)
 		}
-
-		declarations = append(declarations, node)
-
-		return declarations
 	}
 
 	return declarations
 }
 
-func Parse(input string) (f *Ast.File, err error) {
+func (p *Parser) parseVariableDeclaration() ast.Node {
+	startPos := p.curToken.Pos
+	name := p.curToken.Literal
 
-	f = &Ast.File{
-		Comments: make([]Ast.Comment, 0),
-		Nodes:    make([]Ast.Node, 0),
+	if !p.curTokenIs(token.IDENT) {
+		p.nextToken()
+		return nil
 	}
 
-	reader := strings.NewReader(input)
+	p.nextToken()
 
-	buf := make([]byte, 0)
+	decl := &ast.VariableDeclaration{
+		Name:     name,
+		StartPos: startPos,
+	}
 
-	currentPosition := 0
+	if p.curTokenIs(token.COLON) {
+		// Type declaration: var name : type
+		p.nextToken()
+		if p.curTokenIs(token.NUMERICO) {
+			decl.Type = p.curToken.Literal
+			p.nextToken()
+		}
+	} else if p.curTokenIs(token.ASSIGN) {
+		// Value assignment: var name = value
+		p.nextToken()
+		decl.Value = p.parseExpression()
+	}
 
-	var tok, expect token.Token
+	decl.EndPos = p.curToken.Pos
+	return decl
+}
 
-	var block string
+func (p *Parser) parseSubroutineDeclaration() *ast.SubroutineDeclaration {
+	sub := &ast.SubroutineDeclaration{
+		StartPos: p.curToken.Pos,
+	}
 
-	expect = -1
+	p.nextToken() // consume 'sub'
 
-	var genericDeclaration Ast.GenericDeclaration
-	var subroutineDeclaration Ast.SubroutineDeclaration
-	var mainDeclaration Ast.MainDeclaration
-	var subroutine bool
+	if p.curTokenIs(token.IDENT) {
+		sub.Name = p.curToken.Literal
+		p.nextToken()
+	}
 
-	for {
+	// Parse parameters
+	if p.curTokenIs(token.LPAREN) {
+		p.nextToken()
+		sub.Parameters = p.parseParameters()
+		if p.curTokenIs(token.RPAREN) {
+			p.nextToken()
+		}
+	}
 
-		var ignore bool
+	// Parse return type
+	if p.curTokenIs(token.RETORNA) {
+		p.nextToken()
+		if p.curTokenIs(token.NUMERICO) {
+			sub.ReturnType = p.curToken.Literal
+			p.nextToken()
+		}
+	}
 
-		b, err := reader.ReadByte()
+	// Parse body
+	if p.curTokenIs(token.INICIO) {
+		sub.Body = p.parseBlockStatement()
+	}
 
-		ch := string(b)
-		stringBuf := string(buf)
+	sub.EndPos = p.curToken.Pos
+	return sub
+}
 
-		tok = token.Lookup(stringBuf)
+func (p *Parser) parseParameters() []*ast.Parameter {
+	var params []*ast.Parameter
 
-		switch tok {
-		case token.VAR:
-			expect = token.VAR_NAME
-			buf = make([]byte, 0)
-		case token.START:
-			expect = token.END
-			buf = make([]byte, 0)
-			ignore = true
-			block = ""
+	for !p.curTokenIs(token.RPAREN) && !p.curTokenIs(token.EOF) {
+		if p.curTokenIs(token.IDENT) {
+			param := &ast.Parameter{
+				Name:     p.curToken.Literal,
+				StartPos: p.curToken.Pos,
+			}
+			p.nextToken()
 
-			if subroutine {
-				// fmt.Println(" - Block starts (subroutine)...")
-			} else {
-				// fmt.Println(" - Block starts (main)...")
-				mainDeclaration = Ast.MainDeclaration{
-					StartPos: token.Pos(currentPosition),
+			if p.curTokenIs(token.COLON) {
+				p.nextToken()
+				if p.curTokenIs(token.NUMERICO) {
+					param.Type = p.curToken.Literal
+					p.nextToken()
 				}
 			}
 
-		case token.SUBR:
-			expect = token.SUBR_NAME
-			buf = make([]byte, 0)
-		case token.SUBR_RETURN:
-			expect = token.SUBR_RETURN_TYPE
-			buf = make([]byte, 0)
+			param.EndPos = p.curToken.Pos
+			params = append(params, param)
+
+			if p.curTokenIs(token.COMMA) {
+				p.nextToken()
+			}
+		} else {
+			p.nextToken()
+		}
+	}
+
+	return params
+}
+
+func (p *Parser) parseBlockStatement() *ast.BlockStatement {
+	block := &ast.BlockStatement{
+		StartPos:   p.curToken.Pos,
+		Statements: []ast.Statement{},
+	}
+
+	p.nextToken() // consume 'inicio' or '{'
+
+	stmtIdx := 0
+	for !p.curTokenIs(token.FIN) && !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+		if p.curTokenIs(token.EOL) {
+			p.nextToken()
+			continue
 		}
 
-		switch expect {
-		case token.VAR_NAME:
-			if ch == "\n" {
-				ignore = true
-			}
-			if ch == ":" {
-				genericDeclaration = Ast.GenericDeclaration{
-					Name:     stringBuf,
-					StartPos: token.Pos(currentPosition - len(stringBuf)),
-				}
-				// fmt.Println("VAR_NAME =",stringBuf)
-				buf = make([]byte, 0)
-				expect = token.VAR_TYPE
-				ignore = true
-			}
-			if ch == "=" {
-				genericDeclaration = Ast.GenericDeclaration{
-					Name:     stringBuf,
-					StartPos: token.Pos(currentPosition - len(stringBuf)),
-				}
-				// fmt.Println("VAR_NAME =",stringBuf)
-				buf = make([]byte, 0)
-				expect = token.VAR_VALUE
-				ignore = true
-			}
-		case token.VAR_TYPE:
-			if ch == "\n" || err == io.EOF {
-				genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf))
-				declaration := genericDeclaration
-
-				// fmt.Println( "*** genericDeclaration:", genericDeclaration)
-				// fmt.Println("VAR_TYPE =", stringBuf)
-
-				f.Nodes = append(f.Nodes, &declaration)
-
-				buf = make([]byte, 0)
-				expect = token.VAR_NAME
-				ignore = true
-			}
-		case token.VAR_VALUE:
-			if ch == "\n" || err == io.EOF {
-				genericDeclaration.EndPos = token.Pos(currentPosition + len(stringBuf))
-
-				declaration := genericDeclaration
-				declaration.Values = Eval(stringBuf, nil)
-
-				f.Nodes = append(f.Nodes, &declaration)
-
-				buf = make([]byte, 0)
-				expect = token.VAR_NAME
-				ignore = true
-			}
-		case token.START:
-			// fmt.Println("Expecting START", stringBuf )
-			if ch == "\n" {
-				ignore = true
-			}
-
-			if len(stringBuf) == 1 {
-				startLinebreak := stringBuf[0:1]
-				if startLinebreak == "\n" {
-					buf = buf[1:len(buf)]
-				}
-			}
-		case token.END:
-			length := len(stringBuf)
-			if length >= 4 {
-
-				lastChars := stringBuf[length-4 : length]
-
-				if lastChars == "fin\n" {
-					block = stringBuf[0 : length-4]
-					fmt.Println(" - Block ends with contents:")
-
-					if subroutine {
-						subroutineDeclaration.EndPos = token.Pos(currentPosition - len(stringBuf))
-						subroutineDeclaration.Body = parseBlockStatement(&block)
-						fmt.Println("*** subroutineDeclaration", subroutineDeclaration)
-						declaration := subroutineDeclaration
-						f.Nodes = append(f.Nodes, &declaration)
-					} else {
-						mainDeclaration.EndPos = token.Pos(currentPosition)
-						mainDeclaration.Body = parseBlockStatement(&block)
-						declaration := mainDeclaration
-						f.Nodes = append(f.Nodes, &declaration)
-					}
-
-					spew.Dump(block)
-					fmt.Println("")
-					buf = make([]byte, 0)
-					subroutine = false
-					expect = -1
-				}
-			}
-
-		case token.SUBR_NAME:
-			charTok := token.Lookup(ch)
-			switch charTok {
-			case token.LPAREN:
-				fmt.Println(" - Subroutine is declared:", stringBuf)
-
-				subroutineDeclaration = Ast.SubroutineDeclaration{
-					Name:     stringBuf,
-					StartPos: token.Pos(currentPosition - len(stringBuf)),
-				}
-
-				subroutine = true
-				ignore = true
-				buf = make([]byte, 0)
-			case token.RPAREN:
-				fmt.Println(" - Subroutine declaration with contents:")
-				spew.Dump(block)
-				fmt.Println("\n")
-				ignore = true
-				buf = make([]byte, 0)
-				expect = token.START
-			}
-			// spew.Dump(ch)
-		case token.SUBR_RETURN_TYPE:
-			if ch == "\n" {
-				buf = make([]byte, 0)
-				fmt.Println(" - Subroutine returns: *", stringBuf, "*")
-				expect = token.START
-			}
-		case -1:
-			if ch == "\n" {
-				ignore = true
-			}
-			if len(stringBuf) == 1 {
-				startLinebreak := stringBuf[0:1]
-				if startLinebreak == "\n" {
-					buf = buf[1:len(buf)]
-				}
-			}
+		stmt := p.parseStatement()
+		if stmt != nil {
+			block.Statements = append(block.Statements, stmt)
+			stmtIdx++
 		}
+	}
 
-		if ch == " " {
-			ignore = true
+	if p.curTokenIs(token.FIN) || p.curTokenIs(token.RBRACE) {
+		p.nextToken()
+	}
+
+	block.EndPos = p.curToken.Pos
+	return block
+}
+
+func (p *Parser) parseStatement() ast.Statement {
+	switch p.curToken.Type {
+	case token.SI:
+		return p.parseIfStatement()
+	case token.MIENTRAS:
+		return p.parseWhileStatement()
+	case token.DESDE:
+		return p.parseForStatement()
+	case token.RETORNA:
+		return p.parseReturnStatement()
+	case token.TERMINAR:
+		return p.parseTerminateStatement()
+	case token.IDENT:
+		if p.peekTokenIs(token.ASSIGN) {
+			return p.parseAssignmentStatement()
 		}
+		return p.parseExpressionStatement()
+	case token.ASSIGN:
+		// Handle case where we're already at the '=' token
+		// This can happen if the parser advanced incorrectly
+		return p.parseExpressionStatement()
+	case token.IMPRIMIR, token.LEER:
+		return p.parseExpressionStatement()
+	default:
+		p.nextToken()
+		return nil
+	}
+}
 
-		if !ignore {
-			buf = append(buf, b)
+func (p *Parser) parseIfStatement() *ast.IfStatement {
+	ifStmt := &ast.IfStatement{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'si'
+
+	if p.curTokenIs(token.LPAREN) {
+		p.nextToken()
+		ifStmt.Condition = p.parseExpression()
+		if p.curTokenIs(token.RPAREN) {
+			p.nextToken()
 		}
+	}
 
-		if err != nil {
-			if err == io.EOF {
-				// fmt.Println("*eof")
-			}
+	if p.curTokenIs(token.LBRACE) {
+		p.nextToken()
+		ifStmt.Then = p.parseBlockStatement()
+	} else {
+		ifStmt.Then = p.parseStatement()
+	}
+
+	if p.curTokenIs(token.SINO) {
+		p.nextToken()
+		if p.curTokenIs(token.LBRACE) {
+			p.nextToken()
+			ifStmt.Else = p.parseBlockStatement()
+		} else {
+			ifStmt.Else = p.parseStatement()
+		}
+	}
+
+	ifStmt.EndPos = p.curToken.Pos
+	return ifStmt
+}
+
+func (p *Parser) parseWhileStatement() *ast.WhileStatement {
+	whileStmt := &ast.WhileStatement{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'mientras'
+
+	if p.curTokenIs(token.LPAREN) {
+		p.nextToken()
+		whileStmt.Condition = p.parseExpression()
+		if p.curTokenIs(token.RPAREN) {
+			p.nextToken()
+		}
+	}
+
+	if p.curTokenIs(token.LBRACE) {
+		p.nextToken()
+		whileStmt.Body = p.parseBlockStatement()
+	} else {
+		whileStmt.Body = p.parseStatement()
+	}
+
+	whileStmt.EndPos = p.curToken.Pos
+	return whileStmt
+}
+
+func (p *Parser) parseForStatement() *ast.ForStatement {
+	forStmt := &ast.ForStatement{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'desde'
+
+	if p.curTokenIs(token.IDENT) {
+		forStmt.Variable = p.curToken.Literal
+		p.nextToken()
+	}
+
+	if p.curTokenIs(token.ASSIGN) {
+		p.nextToken()
+		forStmt.Start = p.parseExpression()
+	}
+
+	if p.curTokenIs(token.HASTA) {
+		p.nextToken()
+		forStmt.EndExpr = p.parseExpression()
+	}
+
+	if p.curTokenIs(token.PASO) {
+		p.nextToken()
+		forStmt.Step = p.parseExpression()
+	}
+
+	if p.curTokenIs(token.LBRACE) {
+		p.nextToken()
+		forStmt.Body = p.parseBlockStatement()
+	} else {
+		forStmt.Body = p.parseStatement()
+	}
+
+	forStmt.EndPos = p.curToken.Pos
+	return forStmt
+}
+
+func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
+	returnStmt := &ast.ReturnStatement{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'retorna'
+
+	if !p.curTokenIs(token.EOL) && !p.curTokenIs(token.EOF) {
+		returnStmt.Value = p.parseExpression()
+	}
+
+	returnStmt.EndPos = p.curToken.Pos
+	return returnStmt
+}
+
+func (p *Parser) parseTerminateStatement() *ast.TerminateStatement {
+	terminateStmt := &ast.TerminateStatement{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'terminar'
+
+	if p.curTokenIs(token.LPAREN) {
+		p.nextToken()
+		terminateStmt.Message = p.parseExpression()
+		if p.curTokenIs(token.RPAREN) {
+			p.nextToken()
+		}
+	}
+
+	terminateStmt.EndPos = p.curToken.Pos
+	return terminateStmt
+}
+
+func (p *Parser) parseAssignmentStatement() *ast.ExpressionStatement {
+	assignment := &ast.AssignmentExpression{
+		Left: &ast.Identifier{
+			Name:     p.curToken.Literal,
+			StartPos: p.curToken.Pos,
+		},
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume identifier
+
+	if p.curTokenIs(token.ASSIGN) {
+		assignment.Operator = p.curToken.Literal
+		p.nextToken() // consume '='
+		assignment.Right = p.parseExpression()
+	}
+
+	assignment.EndPos = assignment.Right.End()
+	assignment.Left.EndPos = assignment.EndPos
+
+	return &ast.ExpressionStatement{
+		Expression: assignment,
+		StartPos:   assignment.StartPos,
+		EndPos:     assignment.EndPos,
+	}
+}
+
+func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
+	stmt := &ast.ExpressionStatement{
+		Expression: p.parseExpression(),
+		StartPos:   p.curToken.Pos,
+	}
+	if stmt.Expression != nil {
+		stmt.EndPos = stmt.Expression.End()
+	}
+	return stmt
+}
+
+func (p *Parser) parseExpression() ast.Expression {
+	return p.parseBinaryExpression(0)
+}
+
+func (p *Parser) parseBinaryExpression(precedence int) ast.Expression {
+	left := p.parseUnaryExpression()
+
+	for !p.curTokenIs(token.EOL) && !p.curTokenIs(token.EOF) && precedence < p.getPrecedence(p.curToken.Type) {
+		// Don't treat assignment as a binary operator
+		if p.curTokenIs(token.ASSIGN) {
 			break
 		}
 
-		currentPosition++
+		operator := p.curToken.Literal
+		p.nextToken()
 
+		right := p.parseBinaryExpression(p.getPrecedence(token.Lookup(operator)) + 1)
+
+		left = &ast.BinaryExpression{
+			Left:     left,
+			Operator: operator,
+			Right:    right,
+			StartPos: left.Pos(),
+			EndPos:   right.End(),
+		}
 	}
 
-	return f, err
+	return left
+}
+
+func (p *Parser) parseUnaryExpression() ast.Expression {
+	switch p.curToken.Type {
+	case token.PLUS, token.MINUS:
+		operator := p.curToken.Literal
+		startPos := p.curToken.Pos
+		p.nextToken()
+
+		operand := p.parseUnaryExpression()
+
+		return &ast.BinaryExpression{
+			Left: &ast.Literal{
+				Type:     token.INT,
+				Value:    "0",
+				StartPos: startPos,
+				EndPos:   startPos,
+			},
+			Operator: operator,
+			Right:    operand,
+			StartPos: startPos,
+			EndPos:   operand.End(),
+		}
+	default:
+		return p.parsePrimaryExpression()
+	}
+}
+
+func (p *Parser) parsePrimaryExpression() ast.Expression {
+	switch p.curToken.Type {
+	case token.IDENT, token.IMPRIMIR, token.LEER:
+		if p.peekTokenIs(token.LPAREN) {
+			return p.parseCallExpression()
+		}
+		if p.curToken.Type == token.IDENT {
+			return p.parseIdentifier()
+		}
+		// For imprimir/leer without parens, treat as nil
+		return nil
+	case token.INT, token.FLOAT:
+		return p.parseLiteral()
+	case token.STRING:
+		return p.parseLiteral()
+	case token.LPAREN:
+		p.nextToken()
+		expr := p.parseExpression()
+		if p.curTokenIs(token.RPAREN) {
+			p.nextToken()
+		}
+		return expr
+	case token.IFVAL:
+		return p.parseIfValExpression()
+	case token.ASSIGN:
+		// Handle assignment token - this should not happen in normal parsing
+		// but if it does, we need to handle it gracefully
+		p.nextToken()
+		return nil
+	default:
+		p.nextToken()
+		return nil
+	}
+}
+
+func (p *Parser) parseIdentifier() *ast.Identifier {
+	ident := &ast.Identifier{
+		Name:     p.curToken.Literal,
+		StartPos: p.curToken.Pos,
+		EndPos:   p.curToken.Pos + token.Pos(len(p.curToken.Literal)),
+	}
+	p.nextToken()
+	return ident
+}
+
+func (p *Parser) parseLiteral() *ast.Literal {
+	lit := &ast.Literal{
+		Type:     p.curToken.Type,
+		Value:    p.curToken.Literal,
+		StartPos: p.curToken.Pos,
+		EndPos:   p.curToken.Pos + token.Pos(len(p.curToken.Literal)),
+	}
+	p.nextToken()
+	return lit
+}
+
+func (p *Parser) parseCallExpression() *ast.CallExpression {
+	call := &ast.CallExpression{
+		Function:  p.curToken.Literal,
+		StartPos:  p.curToken.Pos,
+		Arguments: []ast.Expression{},
+	}
+
+	p.nextToken() // consume function name
+	p.nextToken() // consume '('
+
+	for !p.curTokenIs(token.RPAREN) && !p.curTokenIs(token.EOF) {
+		arg := p.parseExpression()
+		if arg != nil {
+			call.Arguments = append(call.Arguments, arg)
+		}
+
+		if p.curTokenIs(token.COMMA) {
+			p.nextToken()
+		}
+	}
+
+	if p.curTokenIs(token.RPAREN) {
+		p.nextToken()
+	}
+
+	call.EndPos = p.curToken.Pos
+	return call
+}
+
+func (p *Parser) parseIfValExpression() *ast.IfValExpression {
+	ifVal := &ast.IfValExpression{
+		StartPos: p.curToken.Pos,
+	}
+
+	p.nextToken() // consume 'ifval'
+
+	if p.curTokenIs(token.LPAREN) {
+		p.nextToken()
+		ifVal.Condition = p.parseExpression()
+
+		if p.curTokenIs(token.COMMA) {
+			p.nextToken()
+			ifVal.Then = p.parseExpression()
+
+			if p.curTokenIs(token.COMMA) {
+				p.nextToken()
+				ifVal.Else = p.parseExpression()
+			}
+		}
+
+		if p.curTokenIs(token.RPAREN) {
+			p.nextToken()
+		}
+	}
+
+	ifVal.EndPos = p.curToken.Pos
+	return ifVal
+}
+
+func (p *Parser) getPrecedence(t token.Token) int {
+	switch t {
+	case token.MULTIPLY, token.DIVIDE, token.MODULO:
+		return 4
+	case token.PLUS, token.MINUS:
+		return 3
+	case token.EQ, token.NEQ, token.LT, token.LTE, token.GT, token.GTE:
+		return 2
+	case token.AND, token.OR:
+		return 1
+	case token.ASSIGN:
+		return 0 // Assignment has lowest precedence
+	default:
+		return -1
+	}
 }

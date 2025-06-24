@@ -6,17 +6,11 @@ programa hola
  */
 
 var
-a : numerico
-b : numerico
-c : numerico
-x=0
-
-ll = 1
-
-zz=1+2
+  a : numerico
+  b : numerico
+  c : numerico
 
 inicio
   imprimir("hola")
-
   imprimir("mundo")
 fin
