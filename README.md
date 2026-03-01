@@ -1,6 +1,6 @@
 # sl
 
-[![wercker status](https://app.wercker.com/status/2b1d6102e8ba50ad9f74131c030f04fe/s "wercker status")](https://app.wercker.com/project/bykey/2b1d6102e8ba50ad9f74131c030f04fe)
+[![CI](https://github.com/matiasinsaurralde/sl/actions/workflows/ci.yml/badge.svg)](https://github.com/matiasinsaurralde/sl/actions/workflows/ci.yml)
 [![MIT License][license-image]][license-url]
 
 Intérprete experimental de SL, basado en Go.
