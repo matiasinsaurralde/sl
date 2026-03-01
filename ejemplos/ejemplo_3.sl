@@ -42,7 +42,8 @@ sub fact2 (n : numerico) retorna numerico
  * “rastro” de los valores intermedios.
  */
 inicio
-   retorna ifval ( n == 0,
-                   1,
+   retorna ifval ( n == 0, 
+                   1, 
                    n*fact2(n-1))
 fin
+

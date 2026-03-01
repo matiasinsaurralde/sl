@@ -1,314 +1,380 @@
+// Package ast defines the abstract syntax tree for the SL language.
 package ast
 
-import (
-	"os"
+import "github.com/matiasinsaurralde/sl/pkg/lexer"
 
-	"github.com/matiasinsaurralde/sl/pkg/token"
-)
-
-// File represents the root of an SL program
-type File struct {
-	Name        string
-	ProgramName string
-	File        *os.File
-	Scope       *Scope
-	Nodes       []Node
-
-	Comments []Comment
-}
-
-// Node is the interface that all AST nodes implement
+// Node is the base interface for all AST nodes.
 type Node interface {
-	Pos() token.Pos
-	End() token.Pos
+	nodeTag()
 }
 
-// Statement represents a statement node
-type Statement interface {
+// ---- Type nodes ----
+
+// TypeNode represents a type expression.
+type TypeNode interface {
 	Node
-	statementNode()
+	typeTag()
 }
 
-// Expression represents an expression node
-type Expression interface {
-	Node
-	expressionNode()
+// SimpleType is numerico, cadena, or logico.
+type SimpleType struct {
+	Name string // "numerico", "cadena", "logico"
 }
 
-// Comment represents a comment in the source code
-type Comment struct {
-	Text     string
-	StartPos token.Pos
-	EndPos   token.Pos
+func (*SimpleType) nodeTag() {}
+func (*SimpleType) typeTag() {}
+
+// VectorType is vector [N] T or vector [*] T.
+type VectorType struct {
+	Size     int // 0 means open (*)
+	ElemType TypeNode
 }
 
-func (c *Comment) Pos() token.Pos { return c.StartPos }
-func (c *Comment) End() token.Pos { return c.EndPos }
+func (*VectorType) nodeTag() {}
+func (*VectorType) typeTag() {}
 
-// Program represents a program declaration
-type Program struct {
-	Name     string
-	StartPos token.Pos
-	EndPos   token.Pos
+// MatrixType is matriz [d1, d2, ...] T where 0 means open (*).
+type MatrixType struct {
+	Dims     []int // 0 = open (*)
+	ElemType TypeNode
 }
 
-func (p *Program) Pos() token.Pos { return p.StartPos }
-func (p *Program) End() token.Pos { return p.EndPos }
-func (p *Program) statementNode() {}
+func (*MatrixType) nodeTag() {}
+func (*MatrixType) typeTag() {}
 
-// VariableDeclaration represents a variable declaration
-type VariableDeclaration struct {
-	Name     string
-	Type     string
-	Value    Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+// RegistroType is registro { fields }.
+type RegistroType struct {
+	Fields []*FieldDef
 }
 
-func (v *VariableDeclaration) Pos() token.Pos { return v.StartPos }
-func (v *VariableDeclaration) End() token.Pos { return v.EndPos }
-func (v *VariableDeclaration) statementNode() {}
+func (*RegistroType) nodeTag() {}
+func (*RegistroType) typeTag() {}
 
-// SubroutineDeclaration represents a subroutine/function declaration
-type SubroutineDeclaration struct {
+// FieldDef is a single field in a registro.
+type FieldDef struct {
+	Names []string
+	Type  TypeNode
+}
+
+// NamedType is a reference to a user-defined tipo.
+type NamedType struct {
+	Name string
+}
+
+func (*NamedType) nodeTag() {}
+func (*NamedType) typeTag() {}
+
+// ---- Declaration nodes ----
+
+// VarDecl declares one variable (or group) at a given scope.
+type VarDecl struct {
+	Names []string
+	Type  TypeNode // nil if inferred
+	Init  Expr     // nil if no initializer
+}
+
+func (*VarDecl) nodeTag() {}
+
+// ConstDecl declares a named constant.
+type ConstDecl struct {
+	Name string
+	Init Expr
+}
+
+func (*ConstDecl) nodeTag() {}
+
+// TiposDecl declares a named type alias.
+type TiposDecl struct {
+	Name string
+	Type TypeNode
+}
+
+func (*TiposDecl) nodeTag() {}
+
+// SubDecl declares a subroutine or function.
+type SubDecl struct {
 	Name       string
-	Parameters []*Parameter
-	ReturnType string
-	Body       *BlockStatement
-	StartPos   token.Pos
-	EndPos     token.Pos
+	Params     []*ParamGroup
+	ReturnType TypeNode // nil for procedures
+	Consts     []*ConstDecl
+	Types      []*TiposDecl
+	Vars       []*VarDecl
+	Body       []Stmt
 }
 
-func (s *SubroutineDeclaration) Pos() token.Pos { return s.StartPos }
-func (s *SubroutineDeclaration) End() token.Pos { return s.EndPos }
-func (s *SubroutineDeclaration) statementNode() {}
+func (*SubDecl) nodeTag() {}
 
-// Parameter represents a function parameter
-type Parameter struct {
-	Name     string
-	Type     string
-	StartPos token.Pos
-	EndPos   token.Pos
+// ParamGroup is a group of params with the same ref-ness and type.
+type ParamGroup struct {
+	ByRef bool
+	Names []string
+	Type  TypeNode
 }
 
-func (p *Parameter) Pos() token.Pos { return p.StartPos }
-func (p *Parameter) End() token.Pos { return p.EndPos }
+// ---- Program ----
 
-// BlockStatement represents a block of statements
-type BlockStatement struct {
-	Statements []Statement
-	StartPos   token.Pos
-	EndPos     token.Pos
+// Program is the root AST node.
+type Program struct {
+	Name   string // from "programa <name>", may be empty
+	Consts []*ConstDecl
+	Types  []*TiposDecl
+	Vars   []*VarDecl
+	Body   []Stmt
+	Subs   []*SubDecl
 }
 
-func (b *BlockStatement) Pos() token.Pos { return b.StartPos }
-func (b *BlockStatement) End() token.Pos { return b.EndPos }
-func (b *BlockStatement) statementNode() {}
+func (*Program) nodeTag() {}
 
-// ExpressionStatement represents an expression used as a statement
-type ExpressionStatement struct {
-	Expression Expression
-	StartPos   token.Pos
-	EndPos     token.Pos
+// ---- Statement nodes ----
+
+// Stmt is the base interface for statements.
+type Stmt interface {
+	Node
+	stmtTag()
 }
 
-func (e *ExpressionStatement) Pos() token.Pos { return e.StartPos }
-func (e *ExpressionStatement) End() token.Pos { return e.EndPos }
-func (e *ExpressionStatement) statementNode() {}
-
-// IfStatement represents an if-else statement
-type IfStatement struct {
-	Condition Expression
-	Then      Statement
-	Else      Statement
-	StartPos  token.Pos
-	EndPos    token.Pos
+// AssignStmt is target = value.
+type AssignStmt struct {
+	Line   int
+	Target Expr // LValue
+	Value  Expr
 }
 
-func (i *IfStatement) Pos() token.Pos { return i.StartPos }
-func (i *IfStatement) End() token.Pos { return i.EndPos }
-func (i *IfStatement) statementNode() {}
+func (*AssignStmt) nodeTag() {}
+func (*AssignStmt) stmtTag() {}
 
-// WhileStatement represents a while loop
-type WhileStatement struct {
-	Condition Expression
-	Body      Statement
-	StartPos  token.Pos
-	EndPos    token.Pos
+// CallStmt is a subroutine call as a statement.
+type CallStmt struct {
+	Line int
+	Call *CallExpr
 }
 
-func (w *WhileStatement) Pos() token.Pos { return w.StartPos }
-func (w *WhileStatement) End() token.Pos { return w.EndPos }
-func (w *WhileStatement) statementNode() {}
+func (*CallStmt) nodeTag() {}
+func (*CallStmt) stmtTag() {}
 
-// RepeatStatement represents a repetir...hasta loop
-type RepeatStatement struct {
-	Body      Statement
-	Condition Expression
-	StartPos  token.Pos
-	EndPos    token.Pos
+// ImprimirStmt is imprimir(args...).
+type ImprimirStmt struct {
+	Line int
+	Args []Expr
 }
 
-func (r *RepeatStatement) Pos() token.Pos { return r.StartPos }
-func (r *RepeatStatement) End() token.Pos { return r.EndPos }
-func (r *RepeatStatement) statementNode() {}
+func (*ImprimirStmt) nodeTag() {}
+func (*ImprimirStmt) stmtTag() {}
 
-// ForStatement represents a for loop (desde-hasta-paso)
-type ForStatement struct {
-	Variable string
-	Start    Expression
-	EndExpr  Expression
-	Step     Expression
-	Body     Statement
-	StartPos token.Pos
-	EndPos   token.Pos
+// LeerStmt is leer(vars...).
+type LeerStmt struct {
+	Line int
+	Vars []Expr // lvalue expressions
 }
 
-func (f *ForStatement) Pos() token.Pos { return f.StartPos }
-func (f *ForStatement) End() token.Pos { return f.EndPos }
-func (f *ForStatement) statementNode() {}
+func (*LeerStmt) nodeTag() {}
+func (*LeerStmt) stmtTag() {}
 
-// ReturnStatement represents a return statement
-type ReturnStatement struct {
-	Value    Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+// SiStmt is si (cond) { ... [sino si (cond) ...]* [sino ...] }.
+type SiStmt struct {
+	Line    int
+	Cond    Expr
+	Then    []Stmt
+	ElseIfs []*ElseIf
+	Else    []Stmt // nil if no sino
 }
 
-func (r *ReturnStatement) Pos() token.Pos { return r.StartPos }
-func (r *ReturnStatement) End() token.Pos { return r.EndPos }
-func (r *ReturnStatement) statementNode() {}
+func (*SiStmt) nodeTag() {}
+func (*SiStmt) stmtTag() {}
 
-// TerminateStatement represents a terminate statement
-type TerminateStatement struct {
-	Message  Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+// ElseIf is a sino si (cond) branch.
+type ElseIf struct {
+	Cond Expr
+	Body []Stmt
 }
 
-func (t *TerminateStatement) Pos() token.Pos { return t.StartPos }
-func (t *TerminateStatement) End() token.Pos { return t.EndPos }
-func (t *TerminateStatement) statementNode() {}
-
-// Identifier represents an identifier
-type Identifier struct {
-	Name     string
-	StartPos token.Pos
-	EndPos   token.Pos
+// DesdeStmt is desde var=start hasta end [paso step] { body }.
+type DesdeStmt struct {
+	Line  int
+	Var   string
+	Start Expr
+	End   Expr
+	Step  Expr // nil means step = 1
+	Body  []Stmt
 }
 
-func (i *Identifier) Pos() token.Pos  { return i.StartPos }
-func (i *Identifier) End() token.Pos  { return i.EndPos }
-func (i *Identifier) expressionNode() {}
+func (*DesdeStmt) nodeTag() {}
+func (*DesdeStmt) stmtTag() {}
 
-// Literal represents a literal value
-type Literal struct {
-	Type     token.Token
-	Value    string
-	StartPos token.Pos
-	EndPos   token.Pos
+// MientrasStmt is mientras (cond) { body }.
+type MientrasStmt struct {
+	Line int
+	Cond Expr
+	Body []Stmt
 }
 
-func (l *Literal) Pos() token.Pos  { return l.StartPos }
-func (l *Literal) End() token.Pos  { return l.EndPos }
-func (l *Literal) expressionNode() {}
+func (*MientrasStmt) nodeTag() {}
+func (*MientrasStmt) stmtTag() {}
 
-// BinaryExpression represents a binary operation
-type BinaryExpression struct {
-	Left     Expression
-	Operator string
-	Right    Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+// RepetirStmt is repetir body hasta (cond).
+type RepetirStmt struct {
+	Line int
+	Body []Stmt
+	Cond Expr
 }
 
-func (b *BinaryExpression) Pos() token.Pos  { return b.StartPos }
-func (b *BinaryExpression) End() token.Pos  { return b.EndPos }
-func (b *BinaryExpression) expressionNode() {}
+func (*RepetirStmt) nodeTag() {}
+func (*RepetirStmt) stmtTag() {}
 
-// CallExpression represents a function call
-type CallExpression struct {
-	Function  string
-	Arguments []Expression
-	StartPos  token.Pos
-	EndPos    token.Pos
+// EvalStmt is eval { caso (bool) stmts ... [sino stmts] }.
+type EvalStmt struct {
+	Line  int
+	Cases []*EvalCase
+	Else  []Stmt
 }
 
-func (c *CallExpression) Pos() token.Pos  { return c.StartPos }
-func (c *CallExpression) End() token.Pos  { return c.EndPos }
-func (c *CallExpression) expressionNode() {}
+func (*EvalStmt) nodeTag() {}
+func (*EvalStmt) stmtTag() {}
 
-// AssignmentExpression represents an assignment
-type AssignmentExpression struct {
-	Left     *Identifier
-	Operator string
-	Right    Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+// EvalCase is a single caso (bool) stmts block.
+type EvalCase struct {
+	Cond Expr
+	Body []Stmt
 }
 
-func (a *AssignmentExpression) Pos() token.Pos  { return a.StartPos }
-func (a *AssignmentExpression) End() token.Pos  { return a.EndPos }
-func (a *AssignmentExpression) expressionNode() {}
-
-// IfValExpression represents an ifval expression
-type IfValExpression struct {
-	Condition Expression
-	Then      Expression
-	Else      Expression
-	StartPos  token.Pos
-	EndPos    token.Pos
+// SalirStmt exits the innermost loop.
+type SalirStmt struct {
+	Line int
 }
 
-func (i *IfValExpression) Pos() token.Pos  { return i.StartPos }
-func (i *IfValExpression) End() token.Pos  { return i.EndPos }
-func (i *IfValExpression) expressionNode() {}
+func (*SalirStmt) nodeTag() {}
+func (*SalirStmt) stmtTag() {}
 
-// Scope represents a variable scope
-type Scope struct {
-	Variables map[string]interface{}
-	Parent    *Scope
+// RetornaStmt returns a value from a function.
+type RetornaStmt struct {
+	Line  int
+	Value Expr // nil for void
 }
 
-func NewScope(parent *Scope) *Scope {
-	return &Scope{
-		Variables: make(map[string]interface{}),
-		Parent:    parent,
-	}
+func (*RetornaStmt) nodeTag() {}
+func (*RetornaStmt) stmtTag() {}
+
+// TerminarStmt terminates the program.
+type TerminarStmt struct {
+	Line int
+	Msg  Expr // optional
 }
 
-func (s *Scope) Get(name string) (interface{}, bool) {
-	if value, exists := s.Variables[name]; exists {
-		return value, true
-	}
-	if s.Parent != nil {
-		return s.Parent.Get(name)
-	}
-	return nil, false
+func (*TerminarStmt) nodeTag() {}
+func (*TerminarStmt) stmtTag() {}
+
+// ---- Expression nodes ----
+
+// Expr is the base interface for expressions.
+type Expr interface {
+	Node
+	exprTag()
+	GetLine() int
 }
 
-func (s *Scope) Set(name string, value interface{}) {
-	s.Variables[name] = value
+// BinaryExpr is left op right.
+type BinaryExpr struct {
+	Line  int
+	Op    lexer.TokenType
+	Left  Expr
+	Right Expr
 }
 
-type ConstantDeclaration struct {
-	Name     string
-	Value    Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+func (*BinaryExpr) nodeTag()       {}
+func (*BinaryExpr) exprTag()       {}
+func (e *BinaryExpr) GetLine() int { return e.Line }
+
+// UnaryExpr is op operand.
+type UnaryExpr struct {
+	Line    int
+	Op      lexer.TokenType
+	Operand Expr
 }
 
-func (c *ConstantDeclaration) Pos() token.Pos { return c.StartPos }
-func (c *ConstantDeclaration) End() token.Pos { return c.EndPos }
-func (c *ConstantDeclaration) statementNode() {}
+func (*UnaryExpr) nodeTag()       {}
+func (*UnaryExpr) exprTag()       {}
+func (e *UnaryExpr) GetLine() int { return e.Line }
 
-type IndexExpression struct {
-	Left     Expression
-	Index    Expression
-	StartPos token.Pos
-	EndPos   token.Pos
+// IdentExpr is a simple variable or constant reference.
+type IdentExpr struct {
+	Line int
+	Name string
 }
 
-func (i *IndexExpression) Pos() token.Pos  { return i.StartPos }
-func (i *IndexExpression) End() token.Pos  { return i.EndPos }
-func (i *IndexExpression) expressionNode() {}
+func (*IdentExpr) nodeTag()       {}
+func (*IdentExpr) exprTag()       {}
+func (e *IdentExpr) GetLine() int { return e.Line }
+
+// NumberLit is a numeric literal.
+type NumberLit struct {
+	Line  int
+	Value float64
+}
+
+func (*NumberLit) nodeTag()       {}
+func (*NumberLit) exprTag()       {}
+func (e *NumberLit) GetLine() int { return e.Line }
+
+// StringLit is a string literal.
+type StringLit struct {
+	Line  int
+	Value string
+}
+
+func (*StringLit) nodeTag()       {}
+func (*StringLit) exprTag()       {}
+func (e *StringLit) GetLine() int { return e.Line }
+
+// BoolLit is TRUE/FALSE/SI/NO.
+type BoolLit struct {
+	Line  int
+	Value bool
+}
+
+func (*BoolLit) nodeTag()       {}
+func (*BoolLit) exprTag()       {}
+func (e *BoolLit) GetLine() int { return e.Line }
+
+// ArrayLit is { expr, expr, ..., ... }.
+type ArrayLit struct {
+	Line  int
+	Elems []Expr // each elem may itself be an ArrayLit for matrices
+	Fill  bool   // true if last element is "..." (fill rest with last)
+}
+
+func (*ArrayLit) nodeTag()       {}
+func (*ArrayLit) exprTag()       {}
+func (e *ArrayLit) GetLine() int { return e.Line }
+
+// CallExpr is a function/subroutine call.
+type CallExpr struct {
+	Line int
+	Name string
+	Args []Expr
+}
+
+func (*CallExpr) nodeTag()       {}
+func (*CallExpr) exprTag()       {}
+func (e *CallExpr) GetLine() int { return e.Line }
+
+// IndexExpr is arr[i] or arr[i, j, ...].
+type IndexExpr struct {
+	Line    int
+	Array   Expr
+	Indices []Expr
+}
+
+func (*IndexExpr) nodeTag()       {}
+func (*IndexExpr) exprTag()       {}
+func (e *IndexExpr) GetLine() int { return e.Line }
+
+// FieldExpr is record.field.
+type FieldExpr struct {
+	Line   int
+	Record Expr
+	Field  string
+}
+
+func (*FieldExpr) nodeTag()       {}
+func (*FieldExpr) exprTag()       {}
+func (e *FieldExpr) GetLine() int { return e.Line }

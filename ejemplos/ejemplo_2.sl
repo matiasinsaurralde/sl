@@ -12,7 +12,7 @@ var
 inicio
    imprimir ("Ingrese dos enteros positivos:")
    leer (a, b)
-   imprimir ("\nEl MCM de ", a, " y ", b, " es ",
+   imprimir (“\nEl MCM de “, a, “ y “, b, “ es “,
              (a*b) / MCD (a, b))
 fin
 

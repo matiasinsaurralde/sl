@@ -1,847 +1,883 @@
+// Package parser implements a recursive-descent parser for the SL language.
 package parser
 
 import (
 	"fmt"
-	"io"
-	"strings"
+	"strconv"
 
 	"github.com/matiasinsaurralde/sl/pkg/ast"
-	"github.com/matiasinsaurralde/sl/pkg/token"
+	"github.com/matiasinsaurralde/sl/pkg/lexer"
 )
 
+// ParseError records a parse error.
+type ParseError struct {
+	Line int
+	Col  int
+	Msg  string
+}
+
+func (e *ParseError) Error() string {
+	return fmt.Sprintf("line %d col %d: %s", e.Line, e.Col, e.Msg)
+}
+
+// Parser holds the parser state.
 type Parser struct {
-	lexer     *token.Lexer
-	curToken  token.TokenInfo
-	peekToken token.TokenInfo
-	errors    []string
+	lex        *lexer.Lexer
+	errors     []*ParseError
+	parenDepth int // tracks nesting depth of '(' — used to resolve '=' ambiguity
 }
 
-func NewParser(input io.Reader) *Parser {
-	lexer := token.NewLexer(input)
-	p := &Parser{
-		lexer:  lexer,
-		errors: []string{},
+// New creates a Parser for src.
+func New(src string) *Parser {
+	return &Parser{lex: lexer.New(src)}
+}
+
+func (p *Parser) peek() lexer.Token {
+	return p.lex.Peek()
+}
+
+func (p *Parser) next() lexer.Token {
+	return p.lex.Next()
+}
+
+func (p *Parser) expect(tt lexer.TokenType) (lexer.Token, error) {
+	t := p.next()
+	if t.Type == lexer.LPAREN {
+		p.parenDepth++
+	} else if t.Type == lexer.RPAREN && p.parenDepth > 0 {
+		p.parenDepth--
 	}
-
-	// Read two tokens to initialize curToken and peekToken
-	p.nextToken()
-	p.nextToken()
-
-	return p
+	if t.Type != tt {
+		return t, p.errorf(t, "expected %s, got %q", tt, t.Literal)
+	}
+	return t, nil
 }
 
-func (p *Parser) nextToken() {
-	p.curToken = p.peekToken
-	p.peekToken = p.lexer.NextToken()
-}
-
-func (p *Parser) curTokenIs(t token.Token) bool {
-	return p.curToken.Type == t
-}
-
-func (p *Parser) peekTokenIs(t token.Token) bool {
-	return p.peekToken.Type == t
-}
-
-func (p *Parser) expectPeek(t token.Token) bool {
-	if p.peekTokenIs(t) {
-		p.nextToken()
+func (p *Parser) eat(tt lexer.TokenType) bool {
+	if p.peek().Type == tt {
+		p.next()
+		switch tt {
+		case lexer.LPAREN:
+			p.parenDepth++
+		case lexer.RPAREN:
+			if p.parenDepth > 0 {
+				p.parenDepth--
+			}
+		}
 		return true
 	}
-	p.peekError(t)
 	return false
 }
 
-func (p *Parser) peekError(t token.Token) {
-	msg := fmt.Sprintf("expected next token to be %s, got %s instead", t, p.peekToken.Type)
-	p.errors = append(p.errors, msg)
+func (p *Parser) errorf(t lexer.Token, format string, args ...interface{}) error {
+	msg := fmt.Sprintf(format, args...)
+	e := &ParseError{Line: t.Line, Col: t.Col, Msg: msg}
+	p.errors = append(p.errors, e)
+	return e
 }
 
-func (p *Parser) Errors() []string {
+// Errors returns all parse errors.
+func (p *Parser) Errors() []*ParseError {
 	return p.errors
 }
 
-func Parse(input io.Reader) (*ast.File, error) {
-	parser := NewParser(input)
-	file := parser.parseFile()
+// ParseProgram parses an entire SL program.
+func (p *Parser) ParseProgram() (*ast.Program, error) {
+	prog := &ast.Program{}
 
-	if len(parser.errors) > 0 {
-		return nil, fmt.Errorf("parsing errors: %s", strings.Join(parser.errors, "; "))
+	// Optional "programa <name>"
+	if p.peek().Type == lexer.PROGRAMA {
+		p.next()
+		if p.peek().Type == lexer.IDENT {
+			prog.Name = p.next().Literal
+		}
 	}
 
-	return file, nil
+	// Global declarations (var/const/tipos in any order, multiple times)
+	p.parseDecls(&prog.Consts, &prog.Types, &prog.Vars)
+
+	// Main body: inicio ... fin
+	if _, err := p.expect(lexer.INICIO); err != nil {
+		return prog, err
+	}
+	prog.Body = p.parseStmtList(lexer.FIN)
+	if _, err := p.expect(lexer.FIN); err != nil {
+		return prog, err
+	}
+
+	// Subroutine definitions
+	for p.peek().Type == lexer.SUB || p.peek().Type == lexer.SUBRUTINA {
+		sub, err := p.parseSub()
+		if err != nil {
+			return prog, err
+		}
+		prog.Subs = append(prog.Subs, sub)
+	}
+
+	return prog, nil
 }
 
-func (p *Parser) parseFile() *ast.File {
-	file := &ast.File{
-		Nodes:    []ast.Node{},
-		Comments: []ast.Comment{},
-	}
-
-	for p.curToken.Type != token.EOF {
-		switch p.curToken.Type {
-		case token.COMMENT:
-			comment := p.parseComment()
-			file.Comments = append(file.Comments, *comment)
-		case token.EOL:
-			p.nextToken() // skip EOL
-		case token.PROGRAMA:
-			program := p.parseProgram()
-			file.Nodes = append(file.Nodes, program)
-		case token.VAR:
-			declarations := p.parseVariableDeclarations()
-			for _, decl := range declarations {
-				file.Nodes = append(file.Nodes, decl)
-			}
-		case token.SUBR:
-			subroutine := p.parseSubroutineDeclaration()
-			file.Nodes = append(file.Nodes, subroutine)
-		case token.INICIO:
-			block := p.parseBlockStatement()
-			file.Nodes = append(file.Nodes, block)
+// parseDecls parses zero or more var/const/tipos sections.
+func (p *Parser) parseDecls(consts *[]*ast.ConstDecl, types *[]*ast.TiposDecl, vars *[]*ast.VarDecl) {
+	for {
+		switch p.peek().Type {
+		case lexer.CONST, lexer.CONSTANTES:
+			p.next()
+			*consts = append(*consts, p.parseConstSection()...)
+		case lexer.TIPOS:
+			p.next()
+			*types = append(*types, p.parseTiposSection()...)
+		case lexer.VAR, lexer.VARIABLES:
+			p.next()
+			*vars = append(*vars, p.parseVarSection()...)
 		default:
-			p.nextToken()
+			return
+		}
+	}
+}
+
+// parseConstSection parses constant declarations until a non-const token.
+func (p *Parser) parseConstSection() []*ast.ConstDecl {
+	var decls []*ast.ConstDecl
+	for p.peek().Type == lexer.IDENT {
+		name := p.next().Literal
+		if _, err := p.expect(lexer.ASSIGN); err != nil {
+			break
+		}
+		init := p.parseExpr()
+		decls = append(decls, &ast.ConstDecl{Name: name, Init: init})
+	}
+	return decls
+}
+
+// parseTiposSection parses type alias declarations.
+// SL syntax: name = type (using '=' not ':')
+func (p *Parser) parseTiposSection() []*ast.TiposDecl {
+	var decls []*ast.TiposDecl
+	for p.peek().Type == lexer.IDENT {
+		name := p.next().Literal
+		if _, err := p.expect(lexer.ASSIGN); err != nil {
+			break
+		}
+		typ := p.parseType()
+		decls = append(decls, &ast.TiposDecl{Name: name, Type: typ})
+	}
+	return decls
+}
+
+// parseVarSection parses variable declarations.
+func (p *Parser) parseVarSection() []*ast.VarDecl {
+	var decls []*ast.VarDecl
+	for isVarDeclStart(p.peek()) {
+		d := p.parseOneVarDecl()
+		if d != nil {
+			decls = append(decls, d)
+		}
+	}
+	return decls
+}
+
+// isVarDeclStart returns true if the next token could start a var declaration.
+func isVarDeclStart(t lexer.Token) bool {
+	return t.Type == lexer.IDENT
+}
+
+// parseOneVarDecl parses a single variable declaration line.
+// Forms:
+//
+//	name = expr                    (inferred type, single var)
+//	name : type                    (typed, zero value)
+//	name : type = expr             (typed, initialized)
+//	name, name, ... : type         (multiple vars)
+func (p *Parser) parseOneVarDecl() *ast.VarDecl {
+	if p.peek().Type != lexer.IDENT {
+		return nil
+	}
+
+	// Collect names
+	names := []string{p.next().Literal}
+	for p.peek().Type == lexer.COMMA {
+		p.next()
+		if p.peek().Type == lexer.IDENT {
+			names = append(names, p.next().Literal)
 		}
 	}
 
-	return file
-}
-
-func (p *Parser) parseComment() *ast.Comment {
-	comment := &ast.Comment{
-		Text:     p.curToken.Literal,
-		StartPos: p.curToken.Pos,
-		EndPos:   p.curToken.Pos + token.Pos(len(p.curToken.Literal)),
-	}
-	p.nextToken()
-	return comment
-}
-
-func (p *Parser) parseProgram() *ast.Program {
-	program := &ast.Program{
-		StartPos: p.curToken.Pos,
+	// name = expr  (no type annotation)
+	if p.peek().Type == lexer.ASSIGN && len(names) == 1 {
+		p.next()
+		init := p.parseExpr()
+		return &ast.VarDecl{Names: names, Type: nil, Init: init}
 	}
 
-	p.nextToken() // consume 'programa'
-
-	if p.curTokenIs(token.IDENT) {
-		program.Name = p.curToken.Literal
-		p.nextToken()
+	// name : type [= expr]
+	if _, err := p.expect(lexer.COLON); err != nil {
+		return &ast.VarDecl{Names: names}
 	}
-
-	program.EndPos = p.curToken.Pos
-	return program
+	typ := p.parseType()
+	var init ast.Expr
+	if p.peek().Type == lexer.ASSIGN {
+		p.next()
+		init = p.parseExpr()
+	}
+	return &ast.VarDecl{Names: names, Type: typ, Init: init}
 }
 
-func (p *Parser) parseVariableDeclarations() []ast.Node {
-	var declarations []ast.Node
+// parseType parses a type expression.
+func (p *Parser) parseType() ast.TypeNode {
+	switch p.peek().Type {
+	case lexer.NUMERICO:
+		p.next()
+		return &ast.SimpleType{Name: "numerico"}
+	case lexer.CADENA:
+		p.next()
+		return &ast.SimpleType{Name: "cadena"}
+	case lexer.LOGICO:
+		p.next()
+		return &ast.SimpleType{Name: "logico"}
+	case lexer.VECTOR:
+		return p.parseVectorType()
+	case lexer.MATRIZ:
+		return p.parseMatrixType()
+	case lexer.REGISTRO:
+		return p.parseRegistroType()
+	case lexer.IDENT:
+		name := p.next().Literal
+		return &ast.NamedType{Name: name}
+	}
+	t := p.peek()
+	_ = p.errorf(t, "expected type, got %q", t.Literal)
+	p.next()
+	return &ast.SimpleType{Name: "numerico"}
+}
 
-	for p.curTokenIs(token.VAR) || p.curTokenIs(token.CONST) {
-		if p.curTokenIs(token.VAR) {
-			p.nextToken() // consume 'var'
+func (p *Parser) parseVectorType() ast.TypeNode {
+	p.next() // consume 'vector'
+	if _, err := p.expect(lexer.LBRACK); err != nil {
+		return &ast.VectorType{Size: 0, ElemType: &ast.SimpleType{Name: "numerico"}}
+	}
+	size := 0
+	if p.peek().Type == lexer.STAR {
+		p.next() // consume *
+	} else if p.peek().Type == lexer.NUMBER {
+		n, _ := strconv.Atoi(p.next().Literal)
+		size = n
+	}
+	p.eat(lexer.RBRACK)
+	elemType := ast.TypeNode(&ast.SimpleType{Name: "numerico"})
+	if isTypeStart(p.peek()) {
+		elemType = p.parseType()
+	}
+	return &ast.VectorType{Size: size, ElemType: elemType}
+}
 
-			// Parse variable name list
-			names := p.parseVariableNameList()
-
-			// Parse type declaration
-			if p.curTokenIs(token.COLON) {
-				p.nextToken() // consume ':'
-				if p.curTokenIs(token.NUMERICO) {
-					typeName := p.curToken.Literal
-					p.nextToken()
-
-					// Create a declaration for each variable name
-					for _, name := range names {
-						decl := &ast.VariableDeclaration{
-							Name:     name,
-							Type:     typeName,
-							StartPos: p.curToken.Pos,
-						}
-						declarations = append(declarations, decl)
-					}
-				}
-			}
-		} else if p.curTokenIs(token.CONST) {
-			p.nextToken() // consume 'const'
-
-			// Parse constant declaration
-			if p.curTokenIs(token.IDENT) {
-				decl := p.parseConstantDeclaration()
-				if decl != nil {
-					declarations = append(declarations, decl)
-				}
-			}
+func (p *Parser) parseMatrixType() ast.TypeNode {
+	p.next() // consume 'matriz'
+	if _, err := p.expect(lexer.LBRACK); err != nil {
+		return &ast.MatrixType{Dims: []int{0, 0}, ElemType: &ast.SimpleType{Name: "numerico"}}
+	}
+	var dims []int
+	for {
+		if p.peek().Type == lexer.STAR {
+			p.next()
+			dims = append(dims, 0)
+		} else if p.peek().Type == lexer.NUMBER {
+			n, _ := strconv.Atoi(p.next().Literal)
+			dims = append(dims, n)
+		} else {
+			dims = append(dims, 0)
 		}
-
-		// Skip semicolons and EOL tokens
-		for p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.EOL) {
-			p.nextToken()
-		}
-	}
-
-	return declarations
-}
-
-func (p *Parser) parseVariableNameList() []string {
-	var names []string
-
-	// Parse the first variable name
-	if p.curTokenIs(token.IDENT) {
-		names = append(names, p.curToken.Literal)
-		p.nextToken()
-	} else {
-		return names
-	}
-
-	// Parse additional variable names separated by commas
-	for p.curTokenIs(token.COMMA) {
-		p.nextToken() // consume comma
-		if p.curTokenIs(token.IDENT) {
-			names = append(names, p.curToken.Literal)
-			p.nextToken()
+		if p.peek().Type == lexer.COMMA {
+			p.next()
 		} else {
 			break
 		}
 	}
-
-	return names
+	p.eat(lexer.RBRACK)
+	elemType := ast.TypeNode(&ast.SimpleType{Name: "numerico"})
+	if isTypeStart(p.peek()) {
+		elemType = p.parseType()
+	}
+	return &ast.MatrixType{Dims: dims, ElemType: elemType}
 }
 
-func (p *Parser) parseVariableDeclaration() ast.Node {
-	startPos := p.curToken.Pos
-	name := p.curToken.Literal
+// isTypeStart returns true if t can start a type expression.
+func isTypeStart(t lexer.Token) bool {
+	switch t.Type {
+	case lexer.NUMERICO, lexer.CADENA, lexer.LOGICO,
+		lexer.VECTOR, lexer.MATRIZ, lexer.REGISTRO, lexer.IDENT:
+		return true
+	}
+	return false
+}
 
-	if !p.curTokenIs(token.IDENT) {
-		p.nextToken()
+func (p *Parser) parseRegistroType() ast.TypeNode {
+	p.next() // consume 'registro'
+	p.eat(lexer.LBRACE)
+	var fields []*ast.FieldDef
+	for p.peek().Type == lexer.IDENT {
+		names := []string{p.next().Literal}
+		for p.peek().Type == lexer.COMMA {
+			p.next()
+			if p.peek().Type == lexer.IDENT {
+				names = append(names, p.next().Literal)
+			}
+		}
+		p.eat(lexer.COLON)
+		typ := p.parseType()
+		fields = append(fields, &ast.FieldDef{Names: names, Type: typ})
+		p.eat(lexer.SEMI)
+	}
+	p.eat(lexer.RBRACE)
+	return &ast.RegistroType{Fields: fields}
+}
+
+// parseSub parses a subroutine declaration.
+func (p *Parser) parseSub() (*ast.SubDecl, error) {
+	p.next() // consume 'sub' or 'subrutina'
+	nameTok, err := p.expect(lexer.IDENT)
+	if err != nil {
+		return nil, err
+	}
+	sub := &ast.SubDecl{Name: nameTok.Literal}
+
+	// Parameters
+	if p.peek().Type == lexer.LPAREN {
+		p.next()
+		sub.Params = p.parseParams()
+		p.eat(lexer.RPAREN)
+	}
+
+	// Optional return type
+	if p.peek().Type == lexer.RETORNA {
+		p.next()
+		sub.ReturnType = p.parseType()
+	}
+
+	// Local declarations
+	p.parseDecls(&sub.Consts, &sub.Types, &sub.Vars)
+
+	// Body
+	if _, err := p.expect(lexer.INICIO); err != nil {
+		return sub, err
+	}
+	sub.Body = p.parseStmtList(lexer.FIN)
+	p.eat(lexer.FIN)
+
+	return sub, nil
+}
+
+// parseParams parses a parameter list inside ().
+// Groups are separated by ';' or by starting a new ref keyword.
+func (p *Parser) parseParams() []*ast.ParamGroup {
+	var groups []*ast.ParamGroup
+	for p.peek().Type != lexer.RPAREN && p.peek().Type != lexer.EOF {
+		g := p.parseParamGroup()
+		if g != nil {
+			groups = append(groups, g)
+		}
+		if p.peek().Type == lexer.SEMI {
+			p.next()
+		} else if p.peek().Type != lexer.RPAREN && p.peek().Type != lexer.EOF {
+			// Allow implicit continuation without semicolon
+			// if the next token is ref or ident (another group)
+			if p.peek().Type != lexer.REF && p.peek().Type != lexer.IDENT {
+				break
+			}
+		}
+	}
+	return groups
+}
+
+func (p *Parser) parseParamGroup() *ast.ParamGroup {
+	byRef := false
+	if p.peek().Type == lexer.REF {
+		p.next()
+		byRef = true
+	}
+	if p.peek().Type != lexer.IDENT {
 		return nil
 	}
-
-	p.nextToken()
-
-	decl := &ast.VariableDeclaration{
-		Name:     name,
-		StartPos: startPos,
-	}
-
-	if p.curTokenIs(token.COLON) {
-		// Type declaration: var name : type
-		p.nextToken()
-		if p.curTokenIs(token.NUMERICO) {
-			decl.Type = p.curToken.Literal
-			p.nextToken()
-		}
-	} else if p.curTokenIs(token.ASSIGN) {
-		// Value assignment: var name = value
-		p.nextToken()
-		decl.Value = p.parseExpression()
-	}
-
-	decl.EndPos = p.curToken.Pos
-	return decl
-}
-
-func (p *Parser) parseConstantDeclaration() ast.Node {
-	startPos := p.curToken.Pos
-	name := p.curToken.Literal
-
-	if !p.curTokenIs(token.IDENT) {
-		p.nextToken()
-		return nil
-	}
-
-	p.nextToken()
-
-	decl := &ast.ConstantDeclaration{
-		Name:     name,
-		StartPos: startPos,
-	}
-
-	if p.curTokenIs(token.ASSIGN) {
-		// Value assignment: const name = value
-		p.nextToken()
-		decl.Value = p.parseExpression()
-	}
-
-	decl.EndPos = p.curToken.Pos
-	return decl
-}
-
-func (p *Parser) parseSubroutineDeclaration() *ast.SubroutineDeclaration {
-	sub := &ast.SubroutineDeclaration{
-		StartPos: p.curToken.Pos,
-	}
-
-	p.nextToken() // consume 'sub'
-
-	if p.curTokenIs(token.IDENT) {
-		sub.Name = p.curToken.Literal
-		p.nextToken()
-	}
-
-	// Parse parameters
-	if p.curTokenIs(token.LPAREN) {
-		p.nextToken()
-		sub.Parameters = p.parseParameters()
-		if p.curTokenIs(token.RPAREN) {
-			p.nextToken()
+	names := []string{p.next().Literal}
+	for p.peek().Type == lexer.COMMA {
+		p.next()
+		if p.peek().Type == lexer.IDENT {
+			names = append(names, p.next().Literal)
 		}
 	}
-
-	// Parse return type
-	if p.curTokenIs(token.RETORNA) {
-		p.nextToken()
-		if p.curTokenIs(token.NUMERICO) {
-			sub.ReturnType = p.curToken.Literal
-			p.nextToken()
-		}
+	if _, err := p.expect(lexer.COLON); err != nil {
+		return &ast.ParamGroup{ByRef: byRef, Names: names}
 	}
-
-	// Parse body
-	if p.curTokenIs(token.INICIO) {
-		sub.Body = p.parseBlockStatement()
-	}
-
-	sub.EndPos = p.curToken.Pos
-	return sub
+	typ := p.parseType()
+	return &ast.ParamGroup{ByRef: byRef, Names: names, Type: typ}
 }
 
-func (p *Parser) parseParameters() []*ast.Parameter {
-	var params []*ast.Parameter
-
-	for !p.curTokenIs(token.RPAREN) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.IDENT) {
-			param := &ast.Parameter{
-				Name:     p.curToken.Literal,
-				StartPos: p.curToken.Pos,
+// parseStmtList parses statements until stopAt token or EOF.
+func (p *Parser) parseStmtList(stopAt ...lexer.TokenType) []ast.Stmt {
+	var stmts []ast.Stmt
+	for {
+		t := p.peek()
+		if t.Type == lexer.EOF {
+			break
+		}
+		// Check stop tokens
+		for _, stop := range stopAt {
+			if t.Type == stop {
+				return stmts
 			}
-			p.nextToken()
-
-			if p.curTokenIs(token.COLON) {
-				p.nextToken()
-				if p.curTokenIs(token.NUMERICO) {
-					param.Type = p.curToken.Literal
-					p.nextToken()
-				}
-			}
-
-			param.EndPos = p.curToken.Pos
-			params = append(params, param)
-
-			if p.curTokenIs(token.COMMA) {
-				p.nextToken()
-			}
-		} else {
-			p.nextToken()
 		}
-	}
-
-	return params
-}
-
-func (p *Parser) parseBlockStatement() *ast.BlockStatement {
-	block := &ast.BlockStatement{
-		StartPos:   p.curToken.Pos,
-		Statements: []ast.Statement{},
-	}
-
-	// p.nextToken() // DO NOT advance here; let the loop handle the first statement
-
-	stmtIdx := 0
-	for !p.curTokenIs(token.FIN) && !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
-		// Skip EOL and semicolons at the beginning
-		if p.curTokenIs(token.EOL) || p.curTokenIs(token.SEMICOLON) {
-			p.nextToken()
-			continue
+		// Also stop on sino (for si parsing)
+		if t.Type == lexer.SINO {
+			return stmts
 		}
 
-		stmt := p.parseStatement()
+		stmt := p.parseStmt()
 		if stmt != nil {
-			block.Statements = append(block.Statements, stmt)
-			stmtIdx++
+			stmts = append(stmts, stmt)
+		}
+		// Consume optional semicolons
+		for p.peek().Type == lexer.SEMI {
+			p.next()
 		}
 	}
-
-	if p.curTokenIs(token.FIN) || p.curTokenIs(token.RBRACE) {
-		p.nextToken()
-	}
-
-	block.EndPos = p.curToken.Pos
-	return block
+	return stmts
 }
 
-func (p *Parser) parseStatement() ast.Statement {
-	switch p.curToken.Type {
-	case token.SI:
-		return p.parseIfStatement()
-	case token.MIENTRAS:
-		return p.parseWhileStatement()
-	case token.REPETIR:
-		return p.parseRepeatStatement()
-	case token.DESDE:
-		return p.parseForStatement()
-	case token.RETORNA:
-		return p.parseReturnStatement()
-	case token.TERMINAR:
-		return p.parseTerminateStatement()
-	case token.IDENT:
-		if p.peekTokenIs(token.ASSIGN) {
-			return p.parseAssignmentStatement()
-		}
-		return p.parseExpressionStatement()
-	case token.ASSIGN:
-		// Handle case where we're already at the '=' token
-		// This can happen if the parser advanced incorrectly
-		return p.parseExpressionStatement()
-	case token.IMPRIMIR, token.LEER:
-		return p.parseExpressionStatement()
-	default:
-		p.nextToken()
+// parseStmt parses a single statement.
+func (p *Parser) parseStmt() ast.Stmt {
+	t := p.peek()
+	switch t.Type {
+	case lexer.SI:
+		return p.parseSi()
+	case lexer.DESDE:
+		return p.parseDesde()
+	case lexer.MIENTRAS:
+		return p.parseMientras()
+	case lexer.REPETIR:
+		return p.parseRepetir()
+	case lexer.EVAL:
+		return p.parseEval()
+	case lexer.SALIR:
+		p.next()
+		return &ast.SalirStmt{Line: t.Line}
+	case lexer.RETORNA:
+		return p.parseRetorna()
+	case lexer.SEMI:
+		p.next()
 		return nil
 	}
+
+	// Expression statement: assignment or call
+	return p.parseExprStmt()
 }
 
-func (p *Parser) parseIfStatement() *ast.IfStatement {
-	ifStmt := &ast.IfStatement{
-		StartPos: p.curToken.Pos,
-	}
+func (p *Parser) parseSi() ast.Stmt {
+	line := p.peek().Line
+	p.next() // consume 'si'
+	p.eat(lexer.LPAREN)
+	cond := p.parseExpr()
+	p.eat(lexer.RPAREN)
+	p.eat(lexer.LBRACE)
 
-	p.nextToken() // consume 'si'
+	then := p.parseStmtList(lexer.RBRACE, lexer.FIN)
+	var elseIfs []*ast.ElseIf
+	var elsePart []ast.Stmt
 
-	if p.curTokenIs(token.LPAREN) {
-		p.nextToken()
-		ifStmt.Condition = p.parseExpression()
-		if p.curTokenIs(token.RPAREN) {
-			p.nextToken()
-		}
-	}
-
-	if p.curTokenIs(token.LBRACE) {
-		p.nextToken()
-		ifStmt.Then = p.parseBlockStatement()
-	} else {
-		ifStmt.Then = p.parseStatement()
-	}
-
-	if p.curTokenIs(token.SINO) {
-		p.nextToken()
-		if p.curTokenIs(token.LBRACE) {
-			p.nextToken()
-			ifStmt.Else = p.parseBlockStatement()
+	for p.peek().Type == lexer.SINO {
+		p.next() // consume 'sino'
+		if p.peek().Type == lexer.SI {
+			// sino si (cond) ...
+			p.next() // consume 'si'
+			p.eat(lexer.LPAREN)
+			eicond := p.parseExpr()
+			p.eat(lexer.RPAREN)
+			eiBody := p.parseStmtList(lexer.RBRACE, lexer.SINO, lexer.FIN)
+			elseIfs = append(elseIfs, &ast.ElseIf{Cond: eicond, Body: eiBody})
 		} else {
-			ifStmt.Else = p.parseStatement()
+			// plain sino
+			elsePart = p.parseStmtList(lexer.RBRACE, lexer.FIN)
+			break
 		}
 	}
 
-	ifStmt.EndPos = p.curToken.Pos
-	return ifStmt
+	p.eat(lexer.RBRACE)
+	return &ast.SiStmt{
+		Line:    line,
+		Cond:    cond,
+		Then:    then,
+		ElseIfs: elseIfs,
+		Else:    elsePart,
+	}
 }
 
-func (p *Parser) parseWhileStatement() *ast.WhileStatement {
-	whileStmt := &ast.WhileStatement{
-		StartPos: p.curToken.Pos,
+func (p *Parser) parseDesde() ast.Stmt {
+	line := p.peek().Line
+	p.next() // consume 'desde'
+	varName := p.next().Literal
+	p.eat(lexer.ASSIGN)
+	start := p.parseExpr()
+	if _, err := p.expect(lexer.HASTA); err != nil {
+		return &ast.DesdeStmt{Line: line, Var: varName, Start: start, End: start}
 	}
-
-	p.nextToken() // consume 'mientras'
-
-	if p.curTokenIs(token.LPAREN) {
-		p.nextToken()
-		whileStmt.Condition = p.parseExpression()
-		if p.curTokenIs(token.RPAREN) {
-			p.nextToken()
-		}
+	end := p.parseExpr()
+	var step ast.Expr
+	if p.peek().Type == lexer.PASO {
+		p.next()
+		step = p.parseExpr()
 	}
+	p.eat(lexer.LBRACE)
+	body := p.parseStmtList(lexer.RBRACE)
+	p.eat(lexer.RBRACE)
+	return &ast.DesdeStmt{Line: line, Var: varName, Start: start, End: end, Step: step, Body: body}
+}
 
-	if p.curTokenIs(token.LBRACE) {
-		p.nextToken()
-		whileStmt.Body = p.parseBlockStatement()
+func (p *Parser) parseMientras() ast.Stmt {
+	line := p.peek().Line
+	p.next() // consume 'mientras'
+	p.eat(lexer.LPAREN)
+	cond := p.parseExpr()
+	p.eat(lexer.RPAREN)
+	p.eat(lexer.LBRACE)
+	body := p.parseStmtList(lexer.RBRACE)
+	p.eat(lexer.RBRACE)
+	return &ast.MientrasStmt{Line: line, Cond: cond, Body: body}
+}
+
+func (p *Parser) parseRepetir() ast.Stmt {
+	line := p.peek().Line
+	p.next() // consume 'repetir'
+	var body []ast.Stmt
+	if p.peek().Type == lexer.LBRACE {
+		p.next() // consume '{'
+		body = p.parseStmtList(lexer.RBRACE)
+		p.eat(lexer.RBRACE)
 	} else {
-		whileStmt.Body = p.parseStatement()
+		body = p.parseStmtList(lexer.HASTA)
 	}
-
-	whileStmt.EndPos = p.curToken.Pos
-	return whileStmt
+	p.eat(lexer.HASTA)
+	p.eat(lexer.LPAREN)
+	cond := p.parseExpr()
+	p.eat(lexer.RPAREN)
+	return &ast.RepetirStmt{Line: line, Body: body, Cond: cond}
 }
 
-func (p *Parser) parseRepeatStatement() *ast.RepeatStatement {
-	repeatStmt := &ast.RepeatStatement{
-		StartPos: p.curToken.Pos,
+func (p *Parser) parseEval() ast.Stmt {
+	line := p.peek().Line
+	p.next() // consume 'eval'
+	p.eat(lexer.LBRACE)
+	stmt := &ast.EvalStmt{Line: line}
+	for p.peek().Type == lexer.CASO {
+		p.next() // consume 'caso'
+		p.eat(lexer.LPAREN)
+		cond := p.parseExpr()
+		p.eat(lexer.RPAREN)
+		p.eat(lexer.COLON) // optional ':' after caso condition
+		body := p.parseStmtList(lexer.CASO, lexer.SINO, lexer.RBRACE)
+		stmt.Cases = append(stmt.Cases, &ast.EvalCase{Cond: cond, Body: body})
 	}
-
-	p.nextToken() // consume 'repetir'
-
-	// Parse the body (statements to repeat)
-	if p.curTokenIs(token.LBRACE) {
-		p.nextToken()
-		repeatStmt.Body = p.parseBlockStatement()
-	} else {
-		repeatStmt.Body = p.parseStatement()
+	if p.peek().Type == lexer.SINO {
+		p.next()
+		p.eat(lexer.COLON) // optional ':' after sino
+		stmt.Else = p.parseStmtList(lexer.RBRACE)
 	}
-
-	// Parse the hasta condition
-	if p.curTokenIs(token.HASTA) {
-		p.nextToken()
-		if p.curTokenIs(token.LPAREN) {
-			p.nextToken()
-			repeatStmt.Condition = p.parseExpression()
-			if p.curTokenIs(token.RPAREN) {
-				p.nextToken()
-			}
-		} else {
-			repeatStmt.Condition = p.parseExpression()
-		}
-	}
-
-	repeatStmt.EndPos = p.curToken.Pos
-	return repeatStmt
-}
-
-func (p *Parser) parseForStatement() *ast.ForStatement {
-	forStmt := &ast.ForStatement{
-		StartPos: p.curToken.Pos,
-	}
-
-	p.nextToken() // consume 'desde'
-
-	if p.curTokenIs(token.IDENT) {
-		forStmt.Variable = p.curToken.Literal
-		p.nextToken()
-	}
-
-	if p.curTokenIs(token.ASSIGN) {
-		p.nextToken()
-		forStmt.Start = p.parseExpression()
-	}
-
-	if p.curTokenIs(token.HASTA) {
-		p.nextToken()
-		forStmt.EndExpr = p.parseExpression()
-	}
-
-	if p.curTokenIs(token.PASO) {
-		p.nextToken()
-		forStmt.Step = p.parseExpression()
-	}
-
-	if p.curTokenIs(token.LBRACE) {
-		p.nextToken()
-		forStmt.Body = p.parseBlockStatement()
-	} else {
-		forStmt.Body = p.parseStatement()
-	}
-
-	forStmt.EndPos = p.curToken.Pos
-	return forStmt
-}
-
-func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
-	returnStmt := &ast.ReturnStatement{
-		StartPos: p.curToken.Pos,
-	}
-
-	p.nextToken() // consume 'retorna'
-
-	if !p.curTokenIs(token.EOL) && !p.curTokenIs(token.EOF) {
-		returnStmt.Value = p.parseExpression()
-	}
-
-	returnStmt.EndPos = p.curToken.Pos
-	return returnStmt
-}
-
-func (p *Parser) parseTerminateStatement() *ast.TerminateStatement {
-	terminateStmt := &ast.TerminateStatement{
-		StartPos: p.curToken.Pos,
-	}
-
-	p.nextToken() // consume 'terminar'
-
-	if p.curTokenIs(token.LPAREN) {
-		p.nextToken()
-		terminateStmt.Message = p.parseExpression()
-		if p.curTokenIs(token.RPAREN) {
-			p.nextToken()
-		}
-	}
-
-	terminateStmt.EndPos = p.curToken.Pos
-	return terminateStmt
-}
-
-func (p *Parser) parseAssignmentStatement() *ast.ExpressionStatement {
-	assignment := &ast.AssignmentExpression{
-		Left: &ast.Identifier{
-			Name:     p.curToken.Literal,
-			StartPos: p.curToken.Pos,
-		},
-		StartPos: p.curToken.Pos,
-	}
-
-	p.nextToken() // consume identifier
-
-	if p.curTokenIs(token.ASSIGN) {
-		assignment.Operator = p.curToken.Literal
-		p.nextToken() // consume '='
-		assignment.Right = p.parseExpression()
-	}
-
-	if assignment.Right != nil {
-		assignment.EndPos = assignment.Right.End()
-		assignment.Left.EndPos = assignment.EndPos
-	} else {
-		assignment.EndPos = p.curToken.Pos
-		assignment.Left.EndPos = assignment.EndPos
-	}
-
-	return &ast.ExpressionStatement{
-		Expression: assignment,
-		StartPos:   assignment.StartPos,
-		EndPos:     assignment.EndPos,
-	}
-}
-
-func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
-	stmt := &ast.ExpressionStatement{
-		Expression: p.parseExpression(),
-		StartPos:   p.curToken.Pos,
-	}
-	if stmt.Expression != nil {
-		stmt.EndPos = stmt.Expression.End()
-	}
+	p.eat(lexer.RBRACE)
 	return stmt
 }
 
-func (p *Parser) parseExpression() ast.Expression {
-	return p.parseBinaryExpression(0)
+func (p *Parser) parseRetorna() ast.Stmt {
+	line := p.peek().Line
+	p.next() // consume 'retorna'
+	var val ast.Expr
+	// Parens are optional; retorna can appear with or without them.
+	if p.peek().Type == lexer.LPAREN {
+		p.next()
+		val = p.parseExpr()
+		p.eat(lexer.RPAREN)
+	} else if !isStmtTerminator(p.peek()) {
+		// No paren: parse bare expression (e.g. "retorna a")
+		val = p.parseExpr()
+	}
+	return &ast.RetornaStmt{Line: line, Value: val}
 }
 
-func (p *Parser) parseBinaryExpression(precedence int) ast.Expression {
-	left := p.parseUnaryExpression()
+// isStmtTerminator returns true for tokens that cannot start an expression
+// and therefore signal the end of a retorna statement.
+func isStmtTerminator(t lexer.Token) bool {
+	switch t.Type {
+	case lexer.FIN, lexer.SINO, lexer.CASO, lexer.HASTA,
+		lexer.EOF, lexer.RBRACE, lexer.SEMI:
+		return true
+	}
+	return false
+}
 
-	for !p.curTokenIs(token.EOL) && !p.curTokenIs(token.EOF) && precedence < p.getPrecedence(p.curToken.Type) {
-		// Don't treat assignment as a binary operator
-		if p.curTokenIs(token.ASSIGN) {
-			break
-		}
-
-		// Handle array indexing
-		if p.curTokenIs(token.LBRACKET) {
-			indexExpr := &ast.IndexExpression{
-				Left:     left,
-				StartPos: left.Pos(),
-			}
-			p.nextToken() // consume '['
-			indexExpr.Index = p.parseExpression()
-			if p.curTokenIs(token.RBRACKET) {
-				p.nextToken()
-			}
-			indexExpr.EndPos = p.curToken.Pos
-			left = indexExpr
-			continue
-		}
-
-		operator := p.curToken.Literal
-		p.nextToken()
-
-		right := p.parseBinaryExpression(p.getPrecedence(token.Lookup(operator)) + 1)
-
-		left = &ast.BinaryExpression{
-			Left:     left,
-			Operator: operator,
-			Right:    right,
-			StartPos: left.Pos(),
-			EndPos:   right.End(),
-		}
+// parseExprStmt parses an assignment or a call statement.
+func (p *Parser) parseExprStmt() ast.Stmt {
+	expr := p.parseExpr()
+	if expr == nil {
+		// skip unknown token
+		t := p.next()
+		_ = p.errorf(t, "unexpected token %q", t.Literal)
+		return nil
 	}
 
+	// Check if it's an assignment
+	if p.peek().Type == lexer.ASSIGN {
+		line := p.peek().Line
+		p.next()
+		val := p.parseExpr()
+		return &ast.AssignStmt{Line: line, Target: expr, Value: val}
+	}
+
+	// Must be a call statement or terminar/imprimir/leer handled via expression
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		// Check for special built-in statements
+		switch e.Name {
+		case "imprimir":
+			return &ast.ImprimirStmt{Line: e.Line, Args: e.Args}
+		case "leer":
+			return &ast.LeerStmt{Line: e.Line, Vars: e.Args}
+		case "terminar":
+			s := &ast.TerminarStmt{Line: e.Line}
+			if len(e.Args) > 0 {
+				s.Msg = e.Args[0]
+			}
+			return s
+		}
+		return &ast.CallStmt{Line: e.Line, Call: e}
+	}
+
+	return &ast.AssignStmt{Line: expr.GetLine(), Target: expr, Value: expr}
+}
+
+// ---- Expression parsing (recursive descent, precedence climbing) ----
+
+// parseExpr parses the lowest-precedence expression (or).
+func (p *Parser) parseExpr() ast.Expr {
+	return p.parseOr()
+}
+
+func (p *Parser) parseOr() ast.Expr {
+	left := p.parseAnd()
+	for p.peek().Type == lexer.OR || p.peek().Type == lexer.OR2 {
+		line := p.peek().Line
+		p.next()
+		right := p.parseAnd()
+		left = &ast.BinaryExpr{Line: line, Op: lexer.OR, Left: left, Right: right}
+	}
 	return left
 }
 
-func (p *Parser) parseUnaryExpression() ast.Expression {
-	switch p.curToken.Type {
-	case token.PLUS, token.MINUS:
-		operator := p.curToken.Literal
-		startPos := p.curToken.Pos
-		p.nextToken()
-
-		operand := p.parseUnaryExpression()
-
-		return &ast.BinaryExpression{
-			Left: &ast.Literal{
-				Type:     token.INT,
-				Value:    "0",
-				StartPos: startPos,
-				EndPos:   startPos,
-			},
-			Operator: operator,
-			Right:    operand,
-			StartPos: startPos,
-			EndPos:   operand.End(),
-		}
-	default:
-		return p.parsePrimaryExpression()
+func (p *Parser) parseAnd() ast.Expr {
+	left := p.parseNot()
+	for p.peek().Type == lexer.AND || p.peek().Type == lexer.AND2 {
+		line := p.peek().Line
+		p.next()
+		right := p.parseNot()
+		left = &ast.BinaryExpr{Line: line, Op: lexer.AND, Left: left, Right: right}
 	}
+	return left
 }
 
-func (p *Parser) parsePrimaryExpression() ast.Expression {
-	switch p.curToken.Type {
-	case token.IDENT, token.IMPRIMIR, token.LEER:
-		if p.peekTokenIs(token.LPAREN) {
-			return p.parseCallExpression()
-		}
-		if p.curToken.Type == token.IDENT {
-			return p.parseIdentifier()
-		}
-		// For imprimir/leer without parens, treat as nil
-		return nil
-	case token.INT, token.FLOAT:
-		return p.parseLiteral()
-	case token.STRING:
-		lit := p.parseLiteral()
-		if p.curTokenIs(token.LBRACKET) {
-			indexExpr := &ast.IndexExpression{
-				Left:     lit,
-				StartPos: lit.Pos(),
-			}
-			p.nextToken() // consume '['
-			indexExpr.Index = p.parseExpression()
-			if p.curTokenIs(token.RBRACKET) {
-				p.nextToken()
-			}
-			indexExpr.EndPos = p.curToken.Pos
-			return indexExpr
-		}
-		return lit
-	case token.LPAREN:
-		p.nextToken()
-		expr := p.parseExpression()
-		if p.curTokenIs(token.RPAREN) {
-			p.nextToken()
-		}
-		return expr
-	case token.IFVAL:
-		return p.parseIfValExpression()
-	case token.ASSIGN:
-		// Handle assignment token - this should not happen in normal parsing
-		// but if it does, we need to handle it gracefully
-		p.nextToken()
-		return nil
-	default:
-		p.nextToken()
-		return nil
+func (p *Parser) parseNot() ast.Expr {
+	if p.peek().Type == lexer.NOT {
+		line := p.peek().Line
+		p.next()
+		operand := p.parseRelational()
+		return &ast.UnaryExpr{Line: line, Op: lexer.NOT, Operand: operand}
 	}
+	return p.parseRelational()
 }
 
-func (p *Parser) parseIdentifier() *ast.Identifier {
-	ident := &ast.Identifier{
-		Name:     p.curToken.Literal,
-		StartPos: p.curToken.Pos,
-		EndPos:   p.curToken.Pos + token.Pos(len(p.curToken.Literal)),
-	}
-	p.nextToken()
-	return ident
+var relOps = map[lexer.TokenType]bool{
+	lexer.EQ: true, lexer.NEQ: true, lexer.LT: true,
+	lexer.LE: true, lexer.GT: true, lexer.GE: true,
 }
 
-func (p *Parser) parseLiteral() *ast.Literal {
-	lit := &ast.Literal{
-		Type:     p.curToken.Type,
-		Value:    p.curToken.Literal,
-		StartPos: p.curToken.Pos,
-		EndPos:   p.curToken.Pos + token.Pos(len(p.curToken.Literal)),
+func (p *Parser) parseRelational() ast.Expr {
+	left := p.parseAddSub()
+	t := p.peek()
+	op := t.Type
+	// SL uses bare '=' for equality when inside parentheses (e.g. si (x = 1)).
+	// At statement level '=' is assignment and handled separately.
+	if op == lexer.ASSIGN && p.parenDepth > 0 {
+		op = lexer.EQ
 	}
-	p.nextToken()
-	return lit
+	if relOps[op] {
+		line := t.Line
+		p.next()
+		right := p.parseAddSub()
+		return &ast.BinaryExpr{Line: line, Op: op, Left: left, Right: right}
+	}
+	return left
 }
 
-func (p *Parser) parseCallExpression() *ast.CallExpression {
-	call := &ast.CallExpression{
-		Function:  p.curToken.Literal,
-		StartPos:  p.curToken.Pos,
-		Arguments: []ast.Expression{},
+func (p *Parser) parseAddSub() ast.Expr {
+	left := p.parseMulDiv()
+	for p.peek().Type == lexer.PLUS || p.peek().Type == lexer.MINUS {
+		line := p.peek().Line
+		op := p.next().Type
+		right := p.parseMulDiv()
+		left = &ast.BinaryExpr{Line: line, Op: op, Left: left, Right: right}
 	}
-
-	p.nextToken() // consume function name
-	p.nextToken() // consume '('
-
-	for !p.curTokenIs(token.RPAREN) && !p.curTokenIs(token.EOF) {
-		arg := p.parseExpression()
-		if arg != nil {
-			call.Arguments = append(call.Arguments, arg)
-		}
-
-		if p.curTokenIs(token.COMMA) {
-			p.nextToken()
-		}
-	}
-
-	if p.curTokenIs(token.RPAREN) {
-		p.nextToken()
-	}
-
-	call.EndPos = p.curToken.Pos
-	return call
+	return left
 }
 
-func (p *Parser) parseIfValExpression() *ast.IfValExpression {
-	ifVal := &ast.IfValExpression{
-		StartPos: p.curToken.Pos,
+func (p *Parser) parseMulDiv() ast.Expr {
+	left := p.parseUnary()
+	for p.peek().Type == lexer.STAR || p.peek().Type == lexer.SLASH || p.peek().Type == lexer.PERCENT {
+		line := p.peek().Line
+		op := p.next().Type
+		right := p.parseUnary()
+		left = &ast.BinaryExpr{Line: line, Op: op, Left: left, Right: right}
 	}
+	return left
+}
 
-	p.nextToken() // consume 'ifval'
+func (p *Parser) parseUnary() ast.Expr {
+	if p.peek().Type == lexer.MINUS || p.peek().Type == lexer.PLUS {
+		line := p.peek().Line
+		op := p.next().Type
+		operand := p.parsePow()
+		return &ast.UnaryExpr{Line: line, Op: op, Operand: operand}
+	}
+	return p.parsePow()
+}
 
-	if p.curTokenIs(token.LPAREN) {
-		p.nextToken()
-		ifVal.Condition = p.parseExpression()
+func (p *Parser) parsePow() ast.Expr {
+	base := p.parseFactor()
+	if p.peek().Type == lexer.CARET {
+		line := p.peek().Line
+		p.next()
+		// right-associative: recurse into parsePow
+		exp := p.parsePow()
+		return &ast.BinaryExpr{Line: line, Op: lexer.CARET, Left: base, Right: exp}
+	}
+	return base
+}
 
-		if p.curTokenIs(token.COMMA) {
-			p.nextToken()
-			ifVal.Then = p.parseExpression()
+func (p *Parser) parseFactor() ast.Expr {
+	t := p.peek()
+	var expr ast.Expr
 
-			if p.curTokenIs(token.COMMA) {
-				p.nextToken()
-				ifVal.Else = p.parseExpression()
+	switch t.Type {
+	case lexer.NUMBER:
+		p.next()
+		v, _ := strconv.ParseFloat(t.Literal, 64)
+		expr = &ast.NumberLit{Line: t.Line, Value: v}
+
+	case lexer.STRING:
+		p.next()
+		expr = &ast.StringLit{Line: t.Line, Value: t.Literal}
+
+	case lexer.LBRACE:
+		expr = p.parseArrayLit()
+
+	case lexer.LPAREN:
+		p.parenDepth++
+		p.next()
+		expr = p.parseExpr()
+		p.eat(lexer.RPAREN)
+
+	case lexer.IDENT:
+		p.next()
+		name := t.Literal
+		// Boolean predefined constants
+		switch name {
+		case "TRUE", "SI":
+			expr = &ast.BoolLit{Line: t.Line, Value: true}
+		case "FALSE", "NO":
+			expr = &ast.BoolLit{Line: t.Line, Value: false}
+		default:
+			// Function call or variable
+			if p.peek().Type == lexer.LPAREN {
+				p.parenDepth++
+				p.next()
+				args := p.parseArgList()
+				p.eat(lexer.RPAREN)
+				expr = &ast.CallExpr{Line: t.Line, Name: name, Args: args}
+			} else {
+				expr = &ast.IdentExpr{Line: t.Line, Name: name}
 			}
 		}
 
-		if p.curTokenIs(token.RPAREN) {
-			p.nextToken()
+	default:
+		return nil
+	}
+
+	// Apply selectors: [index], [i,j], .campo
+	expr = p.parseSelectors(expr)
+	return expr
+}
+
+func (p *Parser) parseSelectors(base ast.Expr) ast.Expr {
+	for {
+		switch p.peek().Type {
+		case lexer.LBRACK:
+			line := p.peek().Line
+			p.next()
+			indices := []ast.Expr{p.parseExpr()}
+			for p.peek().Type == lexer.COMMA {
+				p.next()
+				indices = append(indices, p.parseExpr())
+			}
+			p.eat(lexer.RBRACK)
+			base = &ast.IndexExpr{Line: line, Array: base, Indices: indices}
+		case lexer.DOT:
+			line := p.peek().Line
+			p.next()
+			field := p.next().Literal
+			base = &ast.FieldExpr{Line: line, Record: base, Field: field}
+		default:
+			return base
 		}
 	}
-
-	ifVal.EndPos = p.curToken.Pos
-	return ifVal
 }
 
-func (p *Parser) parseIndexExpression() *ast.IndexExpression {
-	indexExpr := &ast.IndexExpression{
-		Left:     p.parsePrimaryExpression(),
-		StartPos: p.curToken.Pos,
+func (p *Parser) parseArgList() []ast.Expr {
+	if p.peek().Type == lexer.RPAREN {
+		return nil
 	}
-
-	p.nextToken() // consume '['
-
-	indexExpr.Index = p.parseExpression()
-
-	if p.curTokenIs(token.RBRACKET) {
-		p.nextToken()
+	args := []ast.Expr{p.parseExpr()}
+	for p.peek().Type == lexer.COMMA {
+		p.next()
+		args = append(args, p.parseExpr())
 	}
-
-	indexExpr.EndPos = p.curToken.Pos
-	return indexExpr
+	return args
 }
 
-func (p *Parser) getPrecedence(t token.Token) int {
-	switch t {
-	case token.MULTIPLY, token.DIVIDE, token.MODULO:
-		return 4
-	case token.PLUS, token.MINUS:
-		return 3
-	case token.EQ, token.NEQ, token.LT, token.LTE, token.GT, token.GTE:
-		return 2
-	case token.AND, token.OR:
-		return 1
-	case token.ASSIGN:
-		return 0 // Assignment has lowest precedence
-	default:
-		return -1
+func (p *Parser) parseArrayLit() ast.Expr {
+	line := p.peek().Line
+	p.next() // consume {
+	var elems []ast.Expr
+	fill := false
+	for p.peek().Type != lexer.RBRACE && p.peek().Type != lexer.EOF {
+		if p.peek().Type == lexer.ELLIPSIS {
+			p.next()
+			fill = true
+			break
+		}
+		elems = append(elems, p.parseExpr())
+		if p.peek().Type == lexer.COMMA {
+			p.next()
+		} else {
+			break
+		}
+		// Check for trailing ... after comma
+		if p.peek().Type == lexer.ELLIPSIS {
+			p.next()
+			fill = true
+			break
+		}
 	}
+	p.eat(lexer.RBRACE)
+	return &ast.ArrayLit{Line: line, Elems: elems, Fill: fill}
+}
+
+// Parse parses an SL program from source and returns the AST.
+func Parse(src string) (*ast.Program, []*ParseError) {
+	p := New(src)
+	prog, _ := p.ParseProgram()
+	return prog, p.errors
 }

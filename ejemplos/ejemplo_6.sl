@@ -19,3 +19,4 @@ inicio
    hasta ( n == 0 )
    imprimir (“\nHexadecimal=”, hex)
 fin
+
